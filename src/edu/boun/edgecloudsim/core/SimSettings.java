@@ -138,6 +138,10 @@ public class SimSettings {
 	// Application type names corresponding to taskLookUpTable entries
 	private String[] taskNames = null;
 
+    /** ONAT:
+     * Event tag for edge server movement. */
+    public static final int EDGE_SERVER_MOVE = 9001;
+
 	/**
 	 * Private constructor for singleton pattern implementation.
 	 * Initializes place type counter for mobility configuration.
