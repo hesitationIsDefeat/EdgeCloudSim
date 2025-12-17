@@ -192,4 +192,8 @@ public class SimUtils {
 
 		return result;
 	}
+
+    public static double getEuclideanDistance(Location loc1, Location loc2) {
+        return Math.sqrt(Math.pow(loc1.getXPos() - loc2.getXPos(), 2) + Math.pow(loc1.getYPos() - loc2.getYPos(), 2));
+    }
 }
