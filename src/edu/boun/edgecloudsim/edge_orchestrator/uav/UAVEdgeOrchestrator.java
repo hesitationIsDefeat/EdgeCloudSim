@@ -1,4 +1,4 @@
-package edu.boun.edgecloudsim.applications.tutorial6;
+package edu.boun.edgecloudsim.edge_orchestrator.uav;
 
 import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
