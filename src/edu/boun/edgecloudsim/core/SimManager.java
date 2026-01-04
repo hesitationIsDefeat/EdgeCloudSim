@@ -15,9 +15,7 @@ package edu.boun.edgecloudsim.core;
 import java.io.IOException;
 import java.util.List;
 
-import edu.boun.edgecloudsim.edge_server.EdgeHost;
-import edu.boun.edgecloudsim.mobility.edge.EdgeMobilityModel;
-import edu.boun.edgecloudsim.mobility.edge.DefaultEdgeMobility;
+import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.SimEntity;
@@ -79,7 +77,7 @@ public class SimManager extends SimEntity {
 	private MobileDeviceManager mobileDeviceManager; // Mobile device lifecycle management
 
     // ONAT: EdgeMobility instance
-    private EdgeMobilityModel edgeMobilityModel;
+    private UAVMobilityModel UAVMobilityModel;
 	
 	// Singleton instance
 	private static SimManager instance = null;
@@ -137,8 +135,8 @@ public class SimManager extends SimEntity {
 		mobileDeviceManager.initialize();
 
         // ONAT: create and initialize the EdgeMobility model
-        edgeMobilityModel = scenarioFactory.getEdgeMobilityModel();
-        edgeMobilityModel.initialize(this.edgeServerManager);
+        UAVMobilityModel = scenarioFactory.getEdgeMobilityModel();
+        UAVMobilityModel.initialize(this.edgeServerManager);
 		
 		instance = this;
 	}
@@ -166,15 +164,15 @@ public class SimManager extends SimEntity {
 		//Start Edge Datacenters & Generate VMs
 		edgeServerManager.startDatacenters();
 		edgeServerManager.createVmList(mobileDeviceManager.getId());
-		
+
 		//Start Edge Datacenters & Generate VMs
 		cloudServerManager.startDatacenters();
 		cloudServerManager.createVmList(mobileDeviceManager.getId());
-		
+
 		//Start Mobile Datacenters & Generate VMs
 		mobileServerManager.startDatacenters();
 		mobileServerManager.createVmList(mobileDeviceManager.getId());
-		
+
 		CloudSim.startSimulation();
 	}
 
