@@ -17,15 +17,14 @@ import edu.boun.edgecloudsim.edge_client.DefaultMobileDeviceManager;
 import edu.boun.edgecloudsim.edge_client.MobileDeviceManager;
 import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.DefaultMobileServerManager;
 import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.MobileServerManager;
-import edu.boun.edgecloudsim.edge_orchestrator.BasicEdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
-import edu.boun.edgecloudsim.edge_server.DefaultEdgeServerManager;
+import edu.boun.edgecloudsim.edge_orchestrator.uav.UAVEdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import edu.boun.edgecloudsim.mobility.MobilityModel;
-import edu.boun.edgecloudsim.mobility.NomadicMobility;
-import edu.boun.edgecloudsim.mobility.edge.EdgeMobilityModel;
-import edu.boun.edgecloudsim.network.MM1Queue;
+import edu.boun.edgecloudsim.mobility.uav.BasicUAVMobility;
+import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
 import edu.boun.edgecloudsim.network.NetworkModel;
+import edu.boun.edgecloudsim.network.uav.UAVNetworkModel;
 import edu.boun.edgecloudsim.task_generator.IdleActiveLoadGenerator;
 import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
 
@@ -39,6 +38,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	private final double simulationTime;
 	private final String orchestratorPolicy;
 	private final String simScenario;
+    private final String uavMobilityOption;
 	
 	/**
 	 * Constructor for sample scenario factory.
@@ -51,11 +51,13 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	SampleScenarioFactory(int _numOfMobileDevice,
                           double _simulationTime,
                           String _orchestratorPolicy,
-                          String _simScenario){
+                          String _simScenario,
+                          String uavMobilityOption){
 		orchestratorPolicy = _orchestratorPolicy;
 		numOfMobileDevice = _numOfMobileDevice;
 		simulationTime = _simulationTime;
 		simScenario = _simScenario;
+        this.uavMobilityOption = uavMobilityOption;
 	}
 	
 	/**
@@ -73,7 +75,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	 */
 	@Override
 	public EdgeOrchestrator getEdgeOrchestrator() {
-		return new BasicEdgeOrchestrator(orchestratorPolicy, simScenario);
+		return new UAVEdgeOrchestrator();
 	}
 
 	/**
@@ -82,7 +84,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	 */
 	@Override
 	public MobilityModel getMobilityModel() {
-		return new NomadicMobility(numOfMobileDevice,simulationTime);
+		return new SampleMobilityModel(numOfMobileDevice,simulationTime);
 	}
 
 	/**
@@ -91,7 +93,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	 */
 	@Override
 	public NetworkModel getNetworkModel() {
-		return new MM1Queue(numOfMobileDevice, simScenario);
+		return new UAVNetworkModel(numOfMobileDevice, simScenario);
 	}
 
 	/**
@@ -100,12 +102,12 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	 */
 	@Override
 	public EdgeServerManager getEdgeServerManager() {
-		return new DefaultEdgeServerManager();
+		return new SampleEdgeServerManager();
 	}
 
     @Override
-    public EdgeMobilityModel getEdgeMobilityModel() {
-        return new RandomEdgeMobility();
+    public UAVMobilityModel getEdgeMobilityModel() {
+        return new BasicUAVMobility(uavMobilityOption);
     }
 
     /**
