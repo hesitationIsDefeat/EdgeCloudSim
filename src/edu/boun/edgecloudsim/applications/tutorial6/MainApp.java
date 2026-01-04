@@ -86,14 +86,14 @@ public class MainApp {
             // -> iteration Start/End value to run multiple iterations at a time
             //    in this case start shall be less than or equal to end value
             int iteration = 1;
-            iterationStart = iteration;
-            iterationEnd = iteration;
+            iterationStart = 1;
+            iterationEnd = 10;
         }
 
         // Load simulation settings (returns false if any config inconsistency occurs)
         // Abort early to avoid partial / misleading runs.
         SimSettings SS = SimSettings.getInstance();
-        if(SS.initialize(configFile, edgeDevicesFile, applicationsFile) == false){
+        if(!SS.initialize(configFile, edgeDevicesFile, applicationsFile)){
             SimLogger.printLine("cannot initialize simulation settings!");
             System.exit(0);
         }
@@ -148,60 +148,63 @@ public class MainApp {
                     // Evaluate each orchestrator policy under the active scenario
                     for(int i=0; i<SS.getOrchestratorPolicies().length; i++)
                     {
-                        // Extract current test dimensions
-                        String simScenario = SS.getSimulationScenarios()[k];
-                        String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
-                        Date ScenarioStartDate = Calendar.getInstance().getTime();
-                        now = df.format(ScenarioStartDate);
+                        // Evaluate each UAV mobility option under the active scenario
+                        for (int u=0; u<SS.getUAVMobilityOptions().length; u++) {
+                            // Extract current test dimensions
+                            String simScenario = SS.getSimulationScenarios()[k];
+                            String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
+                            String uavMobilityOption = SS.getUAVMobilityOptions()[u];
+                            Date ScenarioStartDate = Calendar.getInstance().getTime();
+                            now = df.format(ScenarioStartDate);
 
-                        // Log scenario header summarizing experimental factors
-                        SimLogger.printLine("Scenario started at " + now);
-                        SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - #iteration: " + iterationNumber);
-                        SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #devices: " + j);
-                        // Warm-up period: metrics during first interval often excluded from statistical analysis (transient phase).
-                        // Consider filtering in post-processing if comparing steady-state KPIs.
-                        SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + j + "DEVICES");
+                            // Log scenario header summarizing experimental factors
+                            SimLogger.printLine("Scenario started at " + now);
+                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
+                            SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #devices: " + j);
+                            // Warm-up period: metrics during first interval often excluded from statistical analysis (transient phase).
+                            // Consider filtering in post-processing if comparing steady-state KPIs.
+                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + uavMobilityOption + "_" + j + "DEVICES");
 
-                        try
-                        {
-                            // For multi-seed experimentation, wrap this block and vary RNG seeds between iterations.
-                            // Minimal event granularity (0.01) chosen to avoid zero-time collisions
-                            // CloudSim core init:
-                            // num_user: logical users generating events (broker etc.)
-                            // calendar: base time reference
-                            // trace_flag: enable event tracing (disabled for performance)
-                            // last param: minimal time between events (precision)
-                            int num_user = 2;   // number of grid users
-                            Calendar calendar = Calendar.getInstance();
-                            boolean trace_flag = false;  // mean trace events
+                            try
+                            {
+                                // For multi-seed experimentation, wrap this block and vary RNG seeds between iterations.
+                                // Minimal event granularity (0.01) chosen to avoid zero-time collisions
+                                // CloudSim core init:
+                                // num_user: logical users generating events (broker etc.)
+                                // calendar: base time reference
+                                // trace_flag: enable event tracing (disabled for performance)
+                                // last param: minimal time between events (precision)
+                                int num_user = 2;   // number of grid users
+                                Calendar calendar = Calendar.getInstance();
+                                boolean trace_flag = false;  // mean trace events
 
-                            // Initialize the CloudSim library
-                            CloudSim.init(num_user, calendar, trace_flag, 0.01);
+                                // Initialize the CloudSim library
+                                CloudSim.init(num_user, calendar, trace_flag, 0.01);
 
-                            // ScenarioFactory encapsulates workload, mobility, network, placement etc.
-                            ScenarioFactory sampleFactory = new SampleScenarioFactory(j,SS.getSimulationTime(), orchestratorPolicy, simScenario);
+                                // ScenarioFactory encapsulates workload, mobility, network, placement etc.
+                                ScenarioFactory sampleFactory = new SampleScenarioFactory(j,SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
 
-                            // SimManager wires all components, schedules events, and aggregates stats
-                            SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
+                                // SimManager wires all components, schedules events, and aggregates stats
+                                SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
+                                // Kick off discrete-event simulation (blocking until completion)
+                                manager.startSimulation();
+                            }
+                            catch (Exception e)
+                            {
+                                // Crash-fast strategy prevents partial mixed-result datasets
+                                // Any uncaught exception here invalidates experimental run
+                                // Fail fast to avoid corrupt aggregated datasets
+                                SimLogger.printLine("The simulation has been terminated due to an unexpected error");
+                                e.printStackTrace();
+                                System.exit(0);
+                            }
 
-                            // Kick off discrete-event simulation (blocking until completion)
-                            manager.startSimulation();
+                            // Log per-scenario duration (excludes previous scenarios)
+                            Date ScenarioEndDate = Calendar.getInstance().getTime();
+                            now = df.format(ScenarioEndDate);
+                            SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
+                            SimLogger.printLine("----------------------------------------------------------------------");
                         }
-                        catch (Exception e)
-                        {
-                            // Crash-fast strategy prevents partial mixed-result datasets
-                            // Any uncaught exception here invalidates experimental run
-                            // Fail fast to avoid corrupt aggregated datasets
-                            SimLogger.printLine("The simulation has been terminated due to an unexpected error");
-                            e.printStackTrace();
-                            System.exit(0);
-                        }
-
-                        // Log per-scenario duration (excludes previous scenarios)
-                        Date ScenarioEndDate = Calendar.getInstance().getTime();
-                        now = df.format(ScenarioEndDate);
-                        SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
-                        SimLogger.printLine("----------------------------------------------------------------------");
                     }//End of orchestrators loop
                 }//End of scenarios loop
             }//End of mobile devices loop
