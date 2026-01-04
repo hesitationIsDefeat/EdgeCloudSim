@@ -1,4 +1,4 @@
-package edu.boun.edgecloudsim.mobility.edge;
+package edu.boun.edgecloudsim.mobility.uav;
 
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import org.cloudbus.cloudsim.core.SimEvent;
@@ -7,9 +7,9 @@ import org.cloudbus.cloudsim.core.SimEvent;
  * ONAT:
  * An Edge Mobility class used for non-mobile edge servers
  * */
-public class DefaultEdgeMobility extends EdgeMobilityModel {
+public class DefaultUAVMobility extends UAVMobilityModel {
 
-    public DefaultEdgeMobility() {
+    public DefaultUAVMobility() {
         super();
     }
 

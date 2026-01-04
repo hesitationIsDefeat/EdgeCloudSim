@@ -1,15 +1,15 @@
-package edu.boun.edgecloudsim.mobility.edge;
+package edu.boun.edgecloudsim.mobility.uav;
 
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import org.cloudbus.cloudsim.core.SimEntity;
 import org.cloudbus.cloudsim.core.SimEvent;
 
-public abstract class EdgeMobilityModel extends SimEntity {
+public abstract class UAVMobilityModel extends SimEntity {
     protected EdgeServerManager edgeServerManager;
 
-    public EdgeMobilityModel() {
-        super("EdgeMobility");
+    public UAVMobilityModel() {
+        super("UAVMobility");
     }
 
     /**
