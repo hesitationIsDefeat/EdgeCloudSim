@@ -63,14 +63,21 @@ public class UAVNetworkModel extends NetworkModel {
     }
 
     private int getBandwidthAtDistance(double distance) {
-        if (distance <= (double) UAV.SERVICE_RADIUS / 3) {
-            return MAX_WLAN_BANDWIDTH; // 100% speed
-        } else if (distance <= (double) 2 * UAV.SERVICE_RADIUS / 3) {
-            return 3 * MAX_WLAN_BANDWIDTH / 4; // 75% speed
+        if (distance <= 25) {
+            // ONAT: Near-field
+            return MAX_WLAN_BANDWIDTH;
+        } else if (distance <= 75.0) {
+            // ONAT: Mid-range
+            return (int) (0.8 * MAX_WLAN_BANDWIDTH);
+        } else if (distance <= 125.0) {
+            // ONAT: Far-range
+            return (int) (0.5 * MAX_WLAN_BANDWIDTH);
         } else if (distance <= UAV.SERVICE_RADIUS) {
-            return MAX_WLAN_BANDWIDTH / 2; // 50% speed
+            // ONAT: Edge of coverage
+            return (int) (0.2 * MAX_WLAN_BANDWIDTH);
         } else {
-            return MAX_WLAN_BANDWIDTH / 10; // Weak signal edge case
+            // ONAT: Out of range
+            return 0;
         }
     }
 
