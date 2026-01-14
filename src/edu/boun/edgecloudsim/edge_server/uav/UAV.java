@@ -16,7 +16,8 @@ public class UAV extends EdgeHost {
     private double mobilityInterval; // s
     private int speed; // m/s
     private double maxMoveDistance; // m
-    public static int SERVICE_RADIUS = 100; // m
+    // ONAT: Assumed to be at least 125
+    public static int SERVICE_RADIUS = 150; // m
 
     /**
      * Constructs an EdgeHost with the specified resource configuration.
