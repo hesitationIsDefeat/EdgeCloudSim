@@ -40,6 +40,9 @@ public class BasicUAVMobility extends UAVMobilityModel{
         int newX = currentLocation.getXPos();
         int newY = currentLocation.getYPos();
         switch (this.uavMobilityOption) {
+            case "NO" -> {
+                // ONAT: Case for the non-mobile edge servers
+            }
             case "RANDOM" -> {
                 // between 1 and maxMoveDistance
                 int deltaMagnitude = RNG.nextInt((int) uav.getMaxMoveDistance()) + 1;
