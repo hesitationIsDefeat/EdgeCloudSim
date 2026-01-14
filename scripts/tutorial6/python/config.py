@@ -7,8 +7,8 @@ def get_configuration():
         'folder_path': '../../../sim_results/tutorial6',
         'num_iterations': 10,
         'x_tick_interval': 1,
-        'scenario_types': ['RANDOM', 'LOCAL'],
-        'legends': ['RND', 'LOCAL'],
+        'scenario_types': ['NO', 'RANDOM', 'LOCAL'],
+        'legends': ['NO', 'RND', 'LOCAL'],
         'figure_position': [6, 3, 15, 15],  # [left, bottom, width, height] in centimeters
         'font_sizes': [13, 12, 12],  # [xy_label, legend, xy_axis_ticks]
         'x_axis_label': 'Number of Clients',
@@ -28,8 +28,8 @@ def get_configuration():
             [0.08, 0.08, 0.08]  # Color for fifth line
         ],
         # Line styles and markers for colorless plots
-        'bw_markers': ['-k*', '-ko'],
+        'bw_markers': ['-k*', '-ko', '--ks', ':k^', '-.kd'],
         # Line styles and markers for colorful plots
-        'color_markers': ['-*', '-o']
+        'color_markers': ['-*', '-o', '--s', ':^', '-.d']
     }
     return config
