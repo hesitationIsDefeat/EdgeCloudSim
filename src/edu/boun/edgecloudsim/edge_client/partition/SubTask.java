@@ -6,7 +6,7 @@ import org.cloudbus.cloudsim.UtilizationModel;
 public class SubTask extends Task {
 
     // A field for the ID of the parent Task
-    private int parentTaskId;
+    private PartititionableTask parentTask;
 
     /**
      * Constructor for Task with specified parameters.
@@ -24,9 +24,20 @@ public class SubTask extends Task {
     public SubTask(int _mobileDeviceId, int cloudletId, long cloudletLength, int pesNumber, long cloudletFileSize,
                    long cloudletOutputSize, UtilizationModel utilizationModelCpu, UtilizationModel utilizationModelRam,
                    UtilizationModel utilizationModelBw,
-                   int parentTaskId) {
+                   PartititionableTask parentTask) {
         super(_mobileDeviceId, cloudletId, cloudletLength, pesNumber, cloudletFileSize, cloudletOutputSize, utilizationModelCpu, utilizationModelRam, utilizationModelBw);
 
-        this.parentTaskId = parentTaskId;
+        this.parentTask = parentTask;
+    }
+
+    // GETTERS AND SETTERS
+
+    /**
+     * A getter function for the parent task id
+     *
+     * @return parent task id
+     */
+    public PartititionableTask getParentTask() {
+        return this.parentTask;
     }
 }

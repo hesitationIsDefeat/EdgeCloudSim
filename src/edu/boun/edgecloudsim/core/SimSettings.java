@@ -108,6 +108,7 @@ public class SimSettings {
 	private String[] SIMULATION_SCENARIOS;
 	private String[] ORCHESTRATOR_POLICIES;
     private String[] UAV_MOBILITY_OPTIONS;
+	private String[] TASK_PARTITION_OPTIONS;
 
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
@@ -223,6 +224,8 @@ public class SimSettings {
 			SIMULATION_SCENARIOS = prop.getProperty("simulation_scenarios").split(",");
 
             UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
+
+			TASK_PARTITION_OPTIONS = prop.getProperty("task_partition_options").split(",");
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -554,14 +557,20 @@ public class SimSettings {
 	}
 
     /**
-     * returns orchestrator policies as string
+     * returns UAV mobility policies as string
      */
     public String[] getUAVMobilityOptions()
     {
         return UAV_MOBILITY_OPTIONS;
     }
 
-
+	/**
+	 * returns task partition policies as string
+	 */
+	public String[] getTaskPartitionOptions()
+	{
+		return TASK_PARTITION_OPTIONS;
+	}
 
 	public double getNorthernBound() {
 		return NORTHERN_BOUND;

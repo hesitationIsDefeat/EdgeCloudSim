@@ -5,14 +5,7 @@ scripts=(
     "plotAvgFailedTask.py"
     "plotAvgNetworkDelay.py"
     "plotAvgProcessingTime.py"
-    "plotAvgServiceTime.py"
-    "plotAvgVmUtilization.py"
-    #"plotDelayReasonAsBar.py"
-    #"plotGenericLine.py"
-    # "plotLocation.py"
-    #"plotTaskFailureReason.py"
-    #"plotTimeComplexity.py"
-)
+    "plotAvgServiceTime.py")
 
 echo "Starting plot generation sequence..."
 echo "------------------------------------"

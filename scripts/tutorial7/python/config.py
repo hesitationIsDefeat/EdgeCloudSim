@@ -4,17 +4,17 @@ def get_configuration():
     Equivalent to getConfiguration.m.
     """
     config = {
-        'folder_path': '../../../sim_results/tutorial6',
+        'folder_path': '../../../sim_results/tutorial7',
         'num_iterations': 10,
         'x_tick_interval': 1,
-        'scenario_types': ['NO', 'RANDOM', 'LOCAL'],
-        'legends': ['NO', 'RND', 'LOCAL'],
+        'scenario_types': ['NO', 'FULL'],
+        'legends': ['NO', 'FULL'],
         'figure_position': [6, 3, 15, 15],  # [left, bottom, width, height] in centimeters
         'font_sizes': [13, 12, 12],  # [xy_label, legend, xy_axis_ticks]
         'x_axis_label': 'Number of Clients',
-        'min_devices': 100,
-        'step_devices': 100,
-        'max_devices': 1000,
+        'min_devices': 50,
+        'step_devices': 50,
+        'max_devices': 250,
         'use_scientific_notation_x_axis': False, # For future use
         'save_figure_as_pdf': True,
         'plot_confidence_interval': True,
@@ -28,8 +28,8 @@ def get_configuration():
             [0.08, 0.08, 0.08]  # Color for fifth line
         ],
         # Line styles and markers for colorless plots
-        'bw_markers': ['-k*', '-ko', '--ks', ':k^', '-.kd'],
+        'bw_markers': ['-k*', '-ko'],
         # Line styles and markers for colorful plots
-        'color_markers': ['-*', '-o', '--s', ':^', '-.d']
+        'color_markers': ['-*', '-o']
     }
     return config

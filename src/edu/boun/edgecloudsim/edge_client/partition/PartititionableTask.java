@@ -21,6 +21,8 @@ public class PartititionableTask extends Task {
     // A boolean to check if any SubTask failed
     private boolean isAnyFailed;
 
+    private static int SUB_TASK_ID = 0;
+
     /**
      * Constructor for Task with specified parameters.
      *
@@ -54,7 +56,8 @@ public class PartititionableTask extends Task {
     private void init() {
         checkRatioSum();
 
-        generateSubtasks();
+        // ONAT: Instead of creating the subtasks here, it is preferred to create them if the Task is decided to be partitioned
+        // generateSubtasks();
     }
 
     /**
@@ -71,7 +74,7 @@ public class PartititionableTask extends Task {
     /**
      * A function to generate the SubTasks
      */
-    private void generateSubtasks() {
+    public List<SubTask> generateSubtasks() {
         // Total values of the task
         long totalLength = getCloudletLength();
         long totalFileSize = getCloudletFileSize();
@@ -91,8 +94,8 @@ public class PartititionableTask extends Task {
         int subTaskId;
 
         // Iterate over the subtasks, excluding the last one
-        for (int subTaskIndex = 0; subTaskIndex < this.subTasks.size() - 1; subTaskIndex++) {
-            int ratio = partitionRatios.get(subTaskIndex);
+        for (int stIndex = 0; stIndex < this.partitionRatios.size() - 1; stIndex++) {
+            int ratio = partitionRatios.get(stIndex);
 
             // Calculate the values for the SubTask
             subLength = (totalLength * ratio) / 100;
@@ -105,7 +108,7 @@ public class PartititionableTask extends Task {
             partitionedOutputSize += subOutputSize;
 
             // Obtain the ID for the SubTask
-            subTaskId = generateSubTaskId(subTaskIndex);
+            subTaskId = generateSubTaskId(stIndex);
 
             // Create the SubTask
             SubTask subTask = new SubTask(
@@ -118,8 +121,10 @@ public class PartititionableTask extends Task {
                     getUtilizationModelCpu(),
                     getUtilizationModelRam(),
                     getUtilizationModelBw(),
-                    getCloudletId()
+                    this
             );
+
+            subTask.setSubmittedLocation(this.getSubmittedLocation());
 
             // Add the SubTask to the list
             this.subTasks.add(subTask);
@@ -130,7 +135,7 @@ public class PartititionableTask extends Task {
         subFileSize = totalFileSize - partitionedFileSize;
         subOutputSize = totalOutputSize - partitionedOutputSize;
 
-        subTaskId = this.subTasks.size() - 1;
+        subTaskId = generateSubTaskId(this.partitionRatios.size() - 1);
 
         SubTask subTask = new SubTask(
                 getMobileDeviceId(),
@@ -142,10 +147,14 @@ public class PartititionableTask extends Task {
                 getUtilizationModelCpu(),
                 getUtilizationModelRam(),
                 getUtilizationModelBw(),
-                getCloudletId()
+                this
         );
 
+        subTask.setSubmittedLocation(this.getSubmittedLocation());
+
         this.subTasks.add(subTask);
+
+        return getSubTasks();
     }
 
 
@@ -156,7 +165,7 @@ public class PartititionableTask extends Task {
      * @return SubTask ID
      */
     private int generateSubTaskId(int subTaskIndex) {
-        return (getCloudletId() * 10000) + (subTaskIndex);
+        return (getCloudletId() * 100000) + (subTaskIndex);
     }
 
     /**
