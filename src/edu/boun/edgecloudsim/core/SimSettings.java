@@ -39,8 +39,9 @@ public class SimSettings {
 	private static SimSettings instance = null;
 	private Document edgeDevicesDoc = null;
 
+	// ONAT: Changed from 10 to 0
 	/** Simulation time when client activities begin (in seconds) */
-	public static final double CLIENT_ACTIVITY_START_TIME = 10;
+	public static final double CLIENT_ACTIVITY_START_TIME = 0;
 
 	/** Enumeration for different types of virtual machines in the simulation */
 	public static enum VM_TYPES { MOBILE_VM, EDGE_VM, CLOUD_VM }
@@ -106,6 +107,7 @@ public class SimSettings {
 	// Simulation scenario and policy configuration
 	private String[] SIMULATION_SCENARIOS;
 	private String[] ORCHESTRATOR_POLICIES;
+    private String[] UAV_MOBILITY_OPTIONS;
 
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
@@ -137,6 +139,10 @@ public class SimSettings {
 
 	// Application type names corresponding to taskLookUpTable entries
 	private String[] taskNames = null;
+
+    /** ONAT:
+     * Event tag for edge server movement. */
+    public static final int EDGE_SERVER_MOVE = 9001;
 
 	/**
 	 * Private constructor for singleton pattern implementation.
@@ -215,6 +221,8 @@ public class SimSettings {
 			ORCHESTRATOR_POLICIES = prop.getProperty("orchestrator_policies").split(",");
 
 			SIMULATION_SCENARIOS = prop.getProperty("simulation_scenarios").split(",");
+
+            UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -544,6 +552,15 @@ public class SimSettings {
 	{
 		return ORCHESTRATOR_POLICIES;
 	}
+
+    /**
+     * returns orchestrator policies as string
+     */
+    public String[] getUAVMobilityOptions()
+    {
+        return UAV_MOBILITY_OPTIONS;
+    }
+
 
 
 	public double getNorthernBound() {

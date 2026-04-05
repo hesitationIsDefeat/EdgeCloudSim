@@ -19,6 +19,8 @@ import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.MobileServerMana
 import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import edu.boun.edgecloudsim.mobility.MobilityModel;
+import edu.boun.edgecloudsim.mobility.uav.DefaultUAVMobility;
+import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
 import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
 import edu.boun.edgecloudsim.network.NetworkModel;
 
@@ -49,6 +51,16 @@ public interface ScenarioFactory {
 	 * @return MobilityModel instance for device location tracking
 	 */
 	public MobilityModel getMobilityModel();
+
+    /**
+     * ONAT:
+     * Creates the EdgeMobilityModel to simulate edge server mobility.
+     * Contains a default implementation for non-mobile edge server modeling.
+     * @return EdgeMobilityModel instance for edge server location tracking
+     * */
+    default UAVMobilityModel getEdgeMobilityModel() {
+        return new DefaultUAVMobility();
+    }
 
 	/**
 	 * Creates the network model for simulating communication delays and bandwidth.

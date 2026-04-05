@@ -9,6 +9,10 @@
 
 package edu.boun.edgecloudsim.utils;
 
+import edu.boun.edgecloudsim.core.SimManager;
+import org.cloudbus.cloudsim.Datacenter;
+import org.cloudbus.cloudsim.Host;
+
 import java.io.File;
 import java.util.Date;
 import java.util.Random;
@@ -191,5 +195,18 @@ public class SimUtils {
 			result += diffInMilli + ((diffInMilli>1 == true) ? " Milli Seconds" : " Milli Second");
 
 		return result;
+	}
+
+    public static double getEuclideanDistance(Location loc1, Location loc2) {
+        return Math.sqrt(Math.pow(loc1.getXPos() - loc2.getXPos(), 2) + Math.pow(loc1.getYPos() - loc2.getYPos(), 2));
+    }
+
+	public static Host getHostFromId(int hostId) {
+		for(Datacenter dc : SimManager.getInstance().getEdgeServerManager().getDatacenterList()){
+			for(Host h : dc.getHostList()){
+				if(h.getId() == hostId) return h;
+			}
+		}
+		return null;
 	}
 }
