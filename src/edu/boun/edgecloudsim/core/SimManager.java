@@ -137,6 +137,7 @@ public class SimManager extends SimEntity {
         // ONAT: create and initialize the EdgeMobility model
         UAVMobilityModel = scenarioFactory.getEdgeMobilityModel();
         UAVMobilityModel.initialize(this.edgeServerManager);
+        CloudSim.addEntity(UAVMobilityModel);
 		
 		instance = this;
 	}
