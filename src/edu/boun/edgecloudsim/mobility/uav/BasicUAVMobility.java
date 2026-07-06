@@ -113,18 +113,13 @@ public class BasicUAVMobility extends UAVMobilityModel{
         }
 
         // ONAT: Check if the new position is inside the area limits
+        double easternBound = SimSettings.getInstance().getEasternBound();
+        double westernBound = SimSettings.getInstance().getWesternBound();
+        double northernBound = SimSettings.getInstance().getNorthernBound();
+        double southernBound = SimSettings.getInstance().getSouthernBound();
 
-        if (newX > SimSettings.getInstance().getNorthernBound()) newX = (int) SimSettings.getInstance().getNorthernBound();
-        else if (newX < SimSettings.getInstance().getSouthernBound()) newX = (int) SimSettings.getInstance().getSouthernBound();
-
-        if (newX > SimSettings.getInstance().getEasternBound()) newX = (int) SimSettings.getInstance().getEasternBound();
-        else if (newX < SimSettings.getInstance().getWesternBound()) newX = (int) SimSettings.getInstance().getWesternBound();
-
-        if (newY > SimSettings.getInstance().getNorthernBound()) newY = (int) SimSettings.getInstance().getNorthernBound();
-        else if (newY < SimSettings.getInstance().getSouthernBound()) newY = (int) SimSettings.getInstance().getSouthernBound();
-
-        if (newY > SimSettings.getInstance().getEasternBound()) newY = (int) SimSettings.getInstance().getEasternBound();
-        else if (newY < SimSettings.getInstance().getWesternBound()) newY = (int) SimSettings.getInstance().getWesternBound();
+        newX = (int) Math.max(westernBound, Math.min(easternBound, newX));
+        newY = (int) Math.max(southernBound, Math.min(northernBound, newY));
 
         Location newLocation = new Location(
                 currentLocation.getServingWlanId(),
