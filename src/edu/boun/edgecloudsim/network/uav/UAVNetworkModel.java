@@ -54,8 +54,10 @@ public class UAVNetworkModel extends NetworkModel {
         lamda = ((double) 1 / (double) PoissonMean) * (double) deviceCount;
         mu = Bps / avgTaskSize;
 
-        // Safety check to prevent negative delay if system is overloaded (lambda > mu)
-        if (mu <= lamda) return 10.0; // Return a high penalty latency
+        // Safety check to prevent negative delay if the network is overloaded.
+        // Returning zero causes the caller to treat the link as unavailable and
+        // reject the task instead of injecting a synthetic penalty latency.
+        if (mu <= lamda) return 0.0;
 
         double result = (double) 1 / (mu - lamda);
         result += propagationDelay;
