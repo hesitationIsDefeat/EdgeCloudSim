@@ -14,7 +14,7 @@ def get_configuration():
         'x_axis_label': 'Number of Clients',
         'min_devices': 100,
         'step_devices': 100,
-        'max_devices': 1000,
+        'max_devices': 800,
         'use_scientific_notation_x_axis': False, # For future use
         'save_figure_as_pdf': True,
         'plot_confidence_interval': True,
