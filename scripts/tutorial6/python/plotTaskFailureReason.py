@@ -6,14 +6,12 @@ if __name__ == '__main__':
 
     # Group 1: VM Capacity
     plot_generic_line(1, 10, 'Failed Task due to VM Capacity (%)', 'ALL_APPS', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 10, 'Failed Task due to VM Capacity\nfor Augmented Reality App (%)', 'AUGMENTED_REALITY', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 10, 'Failed Task due to VM Capacity\nfor Health App (%)', 'HEALTH_APP', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 10, 'Failed Task due to VM Capacity\nfor Infotainment App (%)', 'INFOTAINMENT_APP', 'percentage_of_failed', 'upper left')
+    plot_generic_line(1, 10, 'Failed Task due to VM Capacity\nfor Disaster Map Fusion App (%)', 'DISASTER_MAP_FUSION', 'percentage_of_failed', 'upper left')
+    plot_generic_line(1, 10, 'Failed Task due to VM Capacity\nfor Situation Awareness Alerts App (%)', 'SITUATION_AWARENESS_ALERTS', 'percentage_of_failed', 'upper left')
 
     # Group 2: Mobility
     plot_generic_line(1, 11, 'Failed Task due to Mobility (%)', 'ALL_APPS', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 11, 'Failed Task due to Mobility\nfor Augmented Reality App (%)', 'AUGMENTED_REALITY', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 11, 'Failed Task due to Mobility\nfor Health App (%)', 'HEALTH_APP', 'percentage_of_failed', 'upper left')
-    plot_generic_line(1, 11, 'Failed Task due to Mobility\nfor Infotainment App (%)', 'INFOTAINMENT_APP', 'percentage_of_failed', 'upper left')
+    plot_generic_line(1, 11, 'Failed Task due to Mobility\nfor Disaster Map Fusion App (%)', 'DISASTER_MAP_FUSION', 'percentage_of_failed', 'upper left')
+    plot_generic_line(1, 11, 'Failed Task due to Mobility\nfor Situation Awareness Alerts App (%)', 'SITUATION_AWARENESS_ALERTS', 'percentage_of_failed', 'upper left')
 
     # ... and so on for WLAN, MAN, WAN failures
