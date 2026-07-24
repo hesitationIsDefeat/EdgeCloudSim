@@ -67,6 +67,12 @@ public class TaskProperty {
 	/** ID of the mobile device that will generate this task */
 	private int mobileDeviceId;
 
+	/** Whether this task should be partitioned into multiple child tasks */
+	private boolean partitionable;
+
+	/** Number of child tasks to create when partitioning is enabled */
+	private int partitionCount;
+
 	/**
 	 * Constructs a TaskProperty with explicitly specified parameters.
 	 * 
@@ -91,6 +97,8 @@ public class TaskProperty {
 		length = _length;
 		inputFileSize = _inputFileSize;
 		outputFileSize = _outputFileSize;
+		partitionable = false;
+		partitionCount = 1;
 	}
 
 	/**
@@ -127,6 +135,8 @@ public class TaskProperty {
 
 		// Retrieve processing element requirement from configuration
 		pesNumber = (int)SimSettings.getInstance().getTaskLookUpTable()[_taskType][8];
+		partitionable = SimSettings.getInstance().isTaskPartitionable(_taskType);
+		partitionCount = SimSettings.getInstance().getTaskPartitionCount(_taskType);
 	}
 
 	/**
@@ -161,6 +171,8 @@ public class TaskProperty {
 		
 		// Retrieve processing element requirement for task type 0
 		pesNumber = (int)SimSettings.getInstance().getTaskLookUpTable()[0][8];
+		partitionable = SimSettings.getInstance().isTaskPartitionable(0);
+		partitionCount = SimSettings.getInstance().getTaskPartitionCount(0);
 	}
 
 	/**
@@ -253,5 +265,13 @@ public class TaskProperty {
 	 */
 	public int getMobileDeviceId(){
 		return mobileDeviceId;
+	}
+
+	public boolean isPartitionable(){
+		return partitionable;
+	}
+
+	public int getPartitionCount(){
+		return partitionCount;
 	}
 }
