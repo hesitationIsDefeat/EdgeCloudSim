@@ -108,6 +108,8 @@ public class SimSettings {
 	private String[] SIMULATION_SCENARIOS;
 	private String[] ORCHESTRATOR_POLICIES;
     private String[] UAV_MOBILITY_OPTIONS;
+	private String[] TASK_PARTITION_POLICIES;
+	private String currentTaskPartitionPolicy;
 
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
@@ -139,6 +141,9 @@ public class SimSettings {
 
 	// Application type names corresponding to taskLookUpTable entries
 	private String[] taskNames = null;
+	private boolean[] taskPartitionable = null;
+	private int[] taskPartitionCount = null;
+	private String[] taskPartitionStrategy = null;
 
     /** ONAT:
      * Event tag for edge server movement. */
@@ -150,6 +155,7 @@ public class SimSettings {
 	 */
 	private SimSettings() {
 		NUM_OF_PLACE_TYPES = 0;
+		currentTaskPartitionPolicy = "FULL";
 	}
 
 	/**
@@ -223,6 +229,7 @@ public class SimSettings {
 			SIMULATION_SCENARIOS = prop.getProperty("simulation_scenarios").split(",");
 
             UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
+			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -561,6 +568,24 @@ public class SimSettings {
         return UAV_MOBILITY_OPTIONS;
     }
 
+	public String[] getTaskPartitionPolicies()
+	{
+		return TASK_PARTITION_POLICIES;
+	}
+
+	public void setTaskPartitionPolicy(String taskPartitionPolicy)
+	{
+		if(taskPartitionPolicy == null || taskPartitionPolicy.trim().isEmpty())
+			currentTaskPartitionPolicy = "FULL";
+		else
+			currentTaskPartitionPolicy = taskPartitionPolicy.trim().toUpperCase();
+	}
+
+	public String getTaskPartitionPolicy()
+	{
+		return currentTaskPartitionPolicy;
+	}
+
 
 
 	public double getNorthernBound() {
@@ -649,6 +674,23 @@ public class SimSettings {
 		return taskNames[taskType];
 	}
 
+	public boolean isTaskPartitionable(int taskType)
+	{
+		if("NO".equals(currentTaskPartitionPolicy))
+			return false;
+		return taskPartitionable[taskType];
+	}
+
+	public int getTaskPartitionCount(int taskType)
+	{
+		return taskPartitionCount[taskType];
+	}
+
+	public String getTaskPartitionStrategy(int taskType)
+	{
+		return taskPartitionStrategy[taskType];
+	}
+
 	/**
 	 * Validates that a required attribute exists in an XML element.
 	 * Throws exception if the attribute is missing or empty.
@@ -730,6 +772,9 @@ public class SimSettings {
 					[mandatoryAttributes.length + optionalAttributes.length];
 
 			taskNames = new String[appList.getLength()];
+			taskPartitionable = new boolean[appList.getLength()];
+			taskPartitionCount = new int[appList.getLength()];
+			taskPartitionStrategy = new String[appList.getLength()];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
 
@@ -737,6 +782,15 @@ public class SimSettings {
 				isAttributePresent(appElement, "name");
 				String taskName = appElement.getAttribute("name");
 				taskNames[i] = taskName;
+				taskPartitionable[i] = false;
+				taskPartitionCount[i] = 1;
+				taskPartitionStrategy[i] = "EQUAL";
+				if(checkElement(appElement, "partitionable"))
+					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
+				if(checkElement(appElement, "partition_count"))
+					taskPartitionCount[i] = Math.max(1, Integer.parseInt(appElement.getElementsByTagName("partition_count").item(0).getTextContent()));
+				if(checkElement(appElement, "partition_strategy"))
+					taskPartitionStrategy[i] = appElement.getElementsByTagName("partition_strategy").item(0).getTextContent();
 
 				for(int m=0; m<mandatoryAttributes.length; m++){
 					isElementPresent(appElement, mandatoryAttributes[m]);
