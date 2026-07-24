@@ -30,6 +30,10 @@ public class Task extends Cloudlet {
 	private int hostIndex;
 	private int vmIndex;
 	private int datacenterId;
+	private boolean partitionChild;
+	private int parentTaskId;
+	private int childIndex;
+	private int childCount;
 
 	/**
 	 * Constructor for Task with specified parameters.
@@ -55,6 +59,10 @@ public class Task extends Cloudlet {
 		
 		mobileDeviceId = _mobileDeviceId;
 		creationTime = CloudSim.clock();
+		partitionChild = false;
+		parentTaskId = -1;
+		childIndex = -1;
+		childCount = 1;
 	}
 
 	
@@ -96,6 +104,22 @@ public class Task extends Cloudlet {
 	 */
 	public void setTaskType(int _type){
 		type=_type;
+	}
+
+	public void setPartitionChild(boolean _partitionChild){
+		partitionChild = _partitionChild;
+	}
+
+	public void setParentTaskId(int _parentTaskId){
+		parentTaskId = _parentTaskId;
+	}
+
+	public void setChildIndex(int _childIndex){
+		childIndex = _childIndex;
+	}
+
+	public void setChildCount(int _childCount){
+		childCount = _childCount;
 	}
 
 	/**
@@ -144,6 +168,22 @@ public class Task extends Cloudlet {
 	 */
 	public int getTaskType(){
 		return type;
+	}
+
+	public boolean isPartitionChild(){
+		return partitionChild;
+	}
+
+	public int getParentTaskId(){
+		return parentTaskId;
+	}
+
+	public int getChildIndex(){
+		return childIndex;
+	}
+
+	public int getChildCount(){
+		return childCount;
 	}
 	
 	/**
