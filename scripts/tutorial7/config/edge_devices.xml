@@ -1,0 +1,306 @@
+<?xml version="1.0"?>
+<edge_devices>
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>150</x_pos>
+            <y_pos>150</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>150</x_pos>
+            <y_pos>150</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>150</x_pos>
+            <y_pos>150</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>150</x_pos>
+            <y_pos>150</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>4</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+</edge_devices>

@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<applications>
+	<application name="DISASTER_MAP_FUSION">
+		<usage_percentage>50</usage_percentage>
+		<partitionable>true</partitionable>
+		<partition_count>4</partition_count>
+		<partition_strategy>EQUAL</partition_strategy>
+		<prob_cloud_selection>5</prob_cloud_selection>
+		<poisson_interarrival>2</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>15</idle_period>
+		<data_upload>1800</data_upload>
+		<data_download>200</data_download>
+		<task_length>16000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>6.5</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>0.65</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SITUATION_AWARENESS_ALERTS">
+		<usage_percentage>50</usage_percentage>
+		<partitionable>false</partitionable>
+		<partition_count>1</partition_count>
+		<partition_strategy>EQUAL</partition_strategy>
+		<prob_cloud_selection>5</prob_cloud_selection>
+		<poisson_interarrival>6</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>20</active_period>
+		<idle_period>40</idle_period>
+		<data_upload>150</data_upload>
+		<data_download>400</data_download>
+		<task_length>2500</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>1.2</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>0.12</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>
