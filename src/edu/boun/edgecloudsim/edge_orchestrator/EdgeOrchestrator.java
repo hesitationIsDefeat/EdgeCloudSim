@@ -13,6 +13,9 @@
 
 package edu.boun.edgecloudsim.edge_orchestrator;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.core.SimEntity;
 
@@ -81,4 +84,29 @@ public abstract class EdgeOrchestrator extends SimEntity{
 	 * @return The selected VM instance for task execution
 	 */
 	public abstract Vm getVmToOffload(Task task, int deviceId);
+
+	/**
+	 * Selects VMs for a batch of sibling sub-tasks (e.g. the children of a
+	 * partitioned task) at the same time.
+	 * 
+	 * <p>The default implementation simply selects each VM independently via
+	 * {@link #getVmToOffload(Task, int)}, which is blind to the load that
+	 * earlier selections in the same batch will place on shared resources once
+	 * they are actually bound. Orchestrators that need to avoid overloading a
+	 * single resource with multiple sub-tasks from the same parent task should
+	 * override this method to account for the cumulative load of the whole
+	 * batch while making each selection.</p>
+	 * 
+	 * @param tasks the sibling tasks needing placement, in submission order
+	 * @param deviceId the device type/category where the tasks should run
+	 * @return list of selected VMs, one per task in the same order (an entry
+	 *         is null if no viable VM could be found for that task)
+	 */
+	public List<Vm> getVmsToOffload(List<Task> tasks, int deviceId) {
+		List<Vm> result = new ArrayList<Vm>(tasks.size());
+		for (Task task : tasks) {
+			result.add(getVmToOffload(task, deviceId));
+		}
+		return result;
+	}
 }
