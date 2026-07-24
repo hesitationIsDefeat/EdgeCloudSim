@@ -11,7 +11,11 @@ import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.core.SimEvent;
 import edu.boun.edgecloudsim.utils.SimUtils;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 
 
@@ -27,8 +31,10 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
         return SimSettings.GENERIC_EDGE_DEVICE_ID;
     }
 
-    // ONAT: Chooses the least busy UAV in the range
-    private UAV getUAVToOffloadTo(Task task) {
+    // ONAT: Chooses the least busy UAV in the range, taking into account any
+    // load already reserved for other sub-tasks selected earlier in the same
+    // batch (see getVmsToOffload) that haven't actually been bound to a VM yet.
+    private UAV getUAVToOffloadTo(Task task, Map<UAV, Double> reservedLoad) {
         List<UAV> uavs = SimManager.getInstance().getEdgeServerManager().getDatacenterList().stream().flatMap(datacenter -> datacenter.getHostList().stream()).map(host -> (UAV) host).toList();
         Location senderLocation = task.getSubmittedLocation();
 
@@ -43,7 +49,8 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
             // ONAT: TODO: Check for energy
 
 
-            double uavLoad = uav.getCurrentLoad();
+            // ONAT: Include load already reserved for sibling sub-tasks in this batch
+            double uavLoad = uav.getCurrentLoad() + reservedLoad.getOrDefault(uav, 0.0);
             // ONAT: Check if the requested load fits into the UAV
             double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uav.getVm().getVmType());
             if (uavLoad + taskLoad > 100.0) continue;
@@ -61,8 +68,31 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
 
     @Override
     public Vm getVmToOffload(Task task, int deviceId) {
-        UAV selectedUAV = this.getUAVToOffloadTo(task);
-        return selectedUAV == null ? null: selectedUAV.getVm();
+        return getVmsToOffload(Collections.singletonList(task), deviceId).get(0);
+    }
+
+    // ONAT: Selects UAVs for a whole batch of sibling sub-tasks at once. Each
+    // selection reserves its predicted load against the chosen UAV before the
+    // next sub-task is placed, so siblings routed to the same UAV are checked
+    // against their combined load instead of each being blind to the others.
+    @Override
+    public List<Vm> getVmsToOffload(List<Task> tasks, int deviceId) {
+        Map<UAV, Double> reservedLoad = new HashMap<UAV, Double>();
+        List<Vm> selectedVMs = new ArrayList<Vm>(tasks.size());
+
+        for (Task task : tasks) {
+            UAV selectedUAV = getUAVToOffloadTo(task, reservedLoad);
+            if (selectedUAV == null) {
+                selectedVMs.add(null);
+                continue;
+            }
+
+            double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(selectedUAV.getVm().getVmType());
+            reservedLoad.merge(selectedUAV, taskLoad, Double::sum);
+            selectedVMs.add(selectedUAV.getVm());
+        }
+
+        return selectedVMs;
     }
 
     @Override
