@@ -36,6 +36,7 @@ import org.w3c.dom.NodeList;
 import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.utils.Location;
+import edu.boun.edgecloudsim.utils.SimUtils;
 
 /**
  * Default implementation of EdgeServerManager for standard edge computing scenarios.
@@ -56,6 +57,11 @@ import edu.boun.edgecloudsim.utils.Location;
  */
 public class DefaultEdgeServerManager extends EdgeServerManager{
 	private int hostIdCounter;    // Global counter for unique host ID assignment
+
+	// ONAT: Maximum random offset (in meters) applied to each host's starting
+	// position within a datacenter so co-located hosts don't all begin at the
+	// exact same coordinate (which would make them behave as a single point).
+	private static final int HOST_POSITION_OFFSET_RANGE = 100;
 
 	/**
 	 * Constructs a DefaultEdgeServerManager and initializes host ID tracking.
@@ -287,8 +293,24 @@ public class DefaultEdgeServerManager extends EdgeServerManager{
 					new VmSchedulerSpaceShared(peList)    // Space-shared VM scheduling policy
 				);
 			
+			// ONAT: Apply a random offset to each host so hosts sharing the same
+			// datacenter location don't start perfectly coincident. The offset is
+			// clamped to the simulation area bounds to keep hosts in-bounds.
+			double angle = SimUtils.RNG.nextDouble() * 2 * Math.PI;
+			double dist = SimUtils.RNG.nextDouble() * HOST_POSITION_OFFSET_RANGE;
+			int hostX = x_pos + (int) Math.round(dist * Math.cos(angle));
+			int hostY = y_pos + (int) Math.round(dist * Math.sin(angle));
+
+			double westernBound = SimSettings.getInstance().getWesternBound();
+			double easternBound = SimSettings.getInstance().getEasternBound();
+			double southernBound = SimSettings.getInstance().getSouthernBound();
+			double northernBound = SimSettings.getInstance().getNorthernBound();
+
+			hostX = (int) Math.max(westernBound, Math.min(easternBound, hostX));
+			hostY = (int) Math.max(southernBound, Math.min(northernBound, hostY));
+
 			// Set geographic location for edge-aware placement decisions
-			host.setPlace(new Location(placeTypeIndex, wlan_id, x_pos, y_pos));
+			host.setPlace(new Location(placeTypeIndex, wlan_id, hostX, hostY));
 			hostList.add(host);
 			hostIdCounter++;
 		}
