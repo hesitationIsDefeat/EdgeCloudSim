@@ -120,8 +120,8 @@ public class SampleMobilityModel extends MobilityModel {
 
                 if (newX < SimSettings.getInstance().getWesternBound()) newX = (int) SimSettings.getInstance().getWesternBound();
                 if (newX > SimSettings.getInstance().getEasternBound()) newX = (int) SimSettings.getInstance().getEasternBound();
-                if (newY < SimSettings.getInstance().getNorthernBound()) newY = (int) SimSettings.getInstance().getNorthernBound();
-                if (newY > SimSettings.getInstance().getSouthernBound()) newY = (int) SimSettings.getInstance().getSouthernBound();
+                if (newY < SimSettings.getInstance().getSouthernBound()) newY = (int) SimSettings.getInstance().getSouthernBound();
+                if (newY > SimSettings.getInstance().getNorthernBound()) newY = (int) SimSettings.getInstance().getNorthernBound();
 
                 treeMap.put(treeMap.lastKey() + travelTime,
                         new Location(0, 0, newX, newY));
