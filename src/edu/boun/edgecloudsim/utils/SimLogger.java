@@ -663,6 +663,7 @@ public class SimLogger {
 	 *   <li>Generic results per application type with performance metrics</li>
 	 *   <li>VM utilization logs for resource usage analysis</li>
 	 *   <li>Location-based performance breakdowns</li>
+	 *   <li>Per-device (x,y) position log for mobility visualization</li>
 	 *   <li>Access point delay measurements over time</li>
 	 *   <li>Deep task logs (if enabled) for detailed event analysis</li>
 	 * </ul></p>
@@ -671,9 +672,9 @@ public class SimLogger {
 	 */
 	public void simStopped() throws IOException {
 		endTime = System.currentTimeMillis();
-		File vmLoadFile = null, locationFile = null, apUploadDelayFile = null, apDownloadDelayFile = null;
-		FileWriter vmLoadFW = null, locationFW = null, apUploadDelayFW = null, apDownloadDelayFW = null;
-		BufferedWriter vmLoadBW = null, locationBW = null, apUploadDelayBW = null, apDownloadDelayBW = null;
+		File vmLoadFile = null, locationFile = null, userLocationFile = null, apUploadDelayFile = null, apDownloadDelayFile = null;
+		FileWriter vmLoadFW = null, locationFW = null, userLocationFW = null, apUploadDelayFW = null, apDownloadDelayFW = null;
+		BufferedWriter vmLoadBW = null, locationBW = null, userLocationBW = null, apUploadDelayBW = null, apDownloadDelayBW = null;
 
 		// Save generic results to file for each app type. last index is average
 		// of all app types
@@ -690,6 +691,10 @@ public class SimLogger {
 			locationFile = new File(outputFolder, filePrefix + "_LOCATION.log");
 			locationFW = new FileWriter(locationFile, true);
 			locationBW = new BufferedWriter(locationFW);
+
+			userLocationFile = new File(outputFolder, filePrefix + "_USER_LOCATIONS.log");
+			userLocationFW = new FileWriter(userLocationFile, true);
+			userLocationBW = new BufferedWriter(userLocationFW);
 
 			apUploadDelayFile = new File(outputFolder, filePrefix + "_AP_UPLOAD_DELAY.log");
 			apUploadDelayFW = new FileWriter(apUploadDelayFile, true);
@@ -718,6 +723,7 @@ public class SimLogger {
 
 			appendToFile(vmLoadBW, "#auto generated file!");
 			appendToFile(locationBW, "#auto generated file!");
+			appendToFile(userLocationBW, "#auto generated file!");
 			appendToFile(apUploadDelayBW, "#auto generated file!");
 			appendToFile(apDownloadDelayBW, "#auto generated file!");
 		}
@@ -816,6 +822,15 @@ public class SimLogger {
 					for (int i = 0; i < SimManager.getInstance().getNumOfMobileDevice(); i++) {
 						Location loc = SimManager.getInstance().getMobilityModel().getLocation(i, time);
 						locationInfo[loc.getServingWlanId()]++;
+
+						// record the exact position of each user at the same sampling
+						// frequency as the location log, so that the movement of the
+						// users can be visualized (e.g. as a heat map over time)
+						userLocationBW.write(time.toString());
+						userLocationBW.write(SimSettings.DELIMITER + i);
+						userLocationBW.write(SimSettings.DELIMITER + loc.getXPos());
+						userLocationBW.write(SimSettings.DELIMITER + loc.getYPos());
+						userLocationBW.newLine();
 					}
 
 					locationBW.write(time.toString());
@@ -978,6 +993,7 @@ public class SimLogger {
 			}
 			vmLoadBW.close();
 			locationBW.close();
+			userLocationBW.close();
 			apUploadDelayBW.close();
 			apDownloadDelayBW.close();
 			for (int i = 0; i < numOfAppTypes + 1; i++) {
