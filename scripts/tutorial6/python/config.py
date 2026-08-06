@@ -7,8 +7,8 @@ def get_configuration():
         'folder_path': '../../../sim_results/tutorial6',
         'num_iterations': 10,
         'x_tick_interval': 1,
-        'scenario_types': ['NO', 'RANDOM', 'LOCAL'],
-        'legends': ['NO', 'RND', 'LOCAL'],
+        'scenario_types': ['NO', 'RANDOM', 'LOCAL', 'ASSIGNED_LOCAL'],
+        'legends': ['NO', 'RND', 'LOCAL', 'ASSIGNED'],
         'figure_position': [6, 3, 15, 15],  # [left, bottom, width, height] in centimeters
         'font_sizes': [13, 12, 12],  # [xy_label, legend, xy_axis_ticks]
         'x_axis_label': 'Number of Clients',
