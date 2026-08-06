@@ -10,10 +10,21 @@ import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.SimEvent;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
 
 public class BasicUAVMobility extends UAVMobilityModel{
     private String uavMobilityOption;
+
+    // ONAT: Fixed, non-overlapping group of mobile device IDs assigned to each
+    // UAV under the ASSIGNED_LOCAL policy. Populated once at startEntity() and
+    // never updated afterwards - membership does not depend on distance.
+    private final Map<UAV, List<Integer>> assignedUsers = new HashMap<>();
 
     public BasicUAVMobility(String uavMobilityOption) {
         super();
@@ -27,10 +38,36 @@ public class BasicUAVMobility extends UAVMobilityModel{
     // ONAT: Create first edge server move events
     @Override
     public void startEntity() {
-        this.edgeServerManager.getDatacenterList().stream()
+        List<UAV> uavs = this.edgeServerManager.getDatacenterList().stream()
                 .flatMap(datacenter -> datacenter.getHostList().stream())
                 .map(uav -> (UAV) uav)
-                .forEach(this::scheduleNextMoveEvent);
+                .toList();
+
+        if (this.uavMobilityOption.equals("ASSIGNED_LOCAL")) {
+            assignUsersToUAVs(uavs);
+        }
+
+        uavs.forEach(this::scheduleNextMoveEvent);
+    }
+
+    // ONAT: Splits every mobile device into equal-sized (round-robin), non-
+    // overlapping groups and permanently assigns one group to each UAV. Unlike
+    // LOCAL - which only reacts to whichever users currently happen to be
+    // within SERVICE_RADIUS - a UAV here keeps chasing the average position of
+    // its own assigned users even after some of them wander out of range.
+    private void assignUsersToUAVs(List<UAV> uavs) {
+        int numOfMobileDevice = SimManager.getInstance().getNumOfMobileDevice();
+        int numOfUavs = uavs.size();
+        if (numOfUavs == 0) return;
+
+        for (UAV uav : uavs) {
+            assignedUsers.put(uav, new ArrayList<>());
+        }
+
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            UAV owner = uavs.get(deviceId % numOfUavs);
+            assignedUsers.get(owner).add(deviceId);
+        }
     }
 
     @Override
@@ -104,6 +141,47 @@ public class BasicUAVMobility extends UAVMobilityModel{
                         newX += delta;
                     } else {
                         newY += delta;
+                    }
+                }
+            }
+            case "ASSIGNED_LOCAL" -> {
+                // ONAT: Centralize among this UAV's permanently assigned users,
+                // regardless of whether they are currently within its own
+                // SERVICE_RADIUS. If the assigned group is spread out (or drifts
+                // apart over time), the averaged target can end up far from any
+                // single member - the UAV "chases the middle" of its group
+                // instead of reacting to who is actually nearby, which can cause
+                // MORE connection losses than LOCAL when the group disperses.
+                List<Integer> myUsers = assignedUsers.getOrDefault(uav, Collections.emptyList());
+                double sumX = 0;
+                double sumY = 0;
+                int userCount = 0;
+
+                for (int mobileDeviceId : myUsers) {
+                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+                    sumX += deviceLoc.getXPos();
+                    sumY += deviceLoc.getYPos();
+                    userCount++;
+                }
+
+                if (userCount > 0) {
+                    double targetX = sumX / userCount;
+                    double targetY = sumY / userCount;
+
+                    double vectorX = targetX - currentLocation.getXPos();
+                    double vectorY = targetY - currentLocation.getYPos();
+                    double distanceToTarget = Math.sqrt(vectorX * vectorX + vectorY * vectorY);
+
+                    double maxSpeed = uav.getMaxMoveDistance();
+
+                    // ONAT: Cap the movement speed
+                    if (distanceToTarget > maxSpeed) {
+                        double ratio = maxSpeed / distanceToTarget;
+                        newX += (int) (vectorX * ratio);
+                        newY += (int) (vectorY * ratio);
+                    } else {
+                        newX = (int) targetX;
+                        newY = (int) targetY;
                     }
                 }
             }
