@@ -13,6 +13,7 @@ package edu.boun.edgecloudsim.applications.tutorial6;
 import edu.boun.edgecloudsim.cloud_server.CloudServerManager;
 import edu.boun.edgecloudsim.cloud_server.DefaultCloudServerManager;
 import edu.boun.edgecloudsim.core.ScenarioFactory;
+import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_client.DefaultMobileDeviceManager;
 import edu.boun.edgecloudsim.edge_client.MobileDeviceManager;
 import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.DefaultMobileServerManager;
@@ -80,11 +81,13 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates mobility model for device movement patterns.
-	 * @return NomadicMobility model for nomadic movement behavior
+	 * @return ConvergingMobilityModel where devices start scattered and converge
+	 * onto 3 hardcoded meeting areas, staying within them once captured
 	 */
 	@Override
 	public MobilityModel getMobilityModel() {
-		return new SampleMobilityModel(numOfMobileDevice,simulationTime);
+		return new ConvergingMobilityModel(numOfMobileDevice, simulationTime,
+				SimSettings.getInstance().getMeetingPointAssignmentPolicy());
 	}
 
 	/**
