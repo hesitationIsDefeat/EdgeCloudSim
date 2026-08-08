@@ -110,6 +110,7 @@ public class SimSettings {
     private String[] UAV_MOBILITY_OPTIONS;
 	private String[] TASK_PARTITION_POLICIES;
 	private String currentTaskPartitionPolicy;
+	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
@@ -230,6 +231,9 @@ public class SimSettings {
 
             UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
 			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
+
+			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
+			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -566,6 +570,15 @@ public class SimSettings {
     public String[] getUAVMobilityOptions()
     {
         return UAV_MOBILITY_OPTIONS;
+    }
+
+    /**
+     * returns the policy used to assign mobile devices to a converging meeting area
+     * (ROUND_ROBIN or CLOSEST)
+     */
+    public String getMeetingPointAssignmentPolicy()
+    {
+        return MEETING_POINT_ASSIGNMENT_POLICY;
     }
 
 	public String[] getTaskPartitionPolicies()
