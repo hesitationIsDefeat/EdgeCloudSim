@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.util.List;
 
 import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
+import edu.boun.edgecloudsim.edge_server.uav.UAV;
+import edu.boun.edgecloudsim.utils.Location;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.SimEntity;
@@ -55,6 +57,7 @@ public class SimManager extends SimEntity {
 	private static final int GET_LOAD_LOG = 2;       // Load logging event
 	private static final int PRINT_PROGRESS = 3;     // Progress reporting event
 	private static final int STOP_SIMULATION = 4;    // Simulation termination event
+	private static final int GET_UAV_LOCATION_LOG = 5; // ONAT: UAV (edge server) location logging event
 	
 	// Simulation configuration parameters
 	private String simScenario;            // Current simulation scenario name
@@ -318,6 +321,9 @@ public class SimManager extends SimEntity {
 		schedule(getId(), SimSettings.getInstance().getSimulationTime()/100, PRINT_PROGRESS); // Progress reporting
 		schedule(getId(), SimSettings.getInstance().getVmLoadLogInterval(), GET_LOAD_LOG);     // Load logging
 		schedule(getId(), SimSettings.getInstance().getSimulationTime(), STOP_SIMULATION);     // Simulation termination
+		// ONAT: UAV location logging, reusing the same sampling frequency as the user location log
+		if(SimSettings.getInstance().getLocationLogInterval() != 0)
+			schedule(getId(), SimSettings.getInstance().getLocationLogInterval(), GET_UAV_LOCATION_LOG);
 		
 		SimLogger.printLine("Done.");
 	}
@@ -361,6 +367,21 @@ public class SimManager extends SimEntity {
 				
 				// Schedule next load logging event
 				schedule(getId(), SimSettings.getInstance().getVmLoadLogInterval(), GET_LOAD_LOG);
+				break;
+			case GET_UAV_LOCATION_LOG:
+				// ONAT: Log the position of every UAV (edge host that actually moves); other
+				// tutorials' plain EdgeHost instances are silently skipped.
+				for (List<? extends Host> hostList : edgeServerManager.getDatacenterList().stream().map(dc -> dc.getHostList()).toList()) {
+					for (Host host : hostList) {
+						if (host instanceof UAV uav) {
+							Location loc = uav.getLocation();
+							SimLogger.getInstance().addUavLocationLog(CloudSim.clock(), uav.getId(), loc.getXPos(), loc.getYPos());
+						}
+					}
+				}
+
+				if(CloudSim.clock() < SimSettings.getInstance().getSimulationTime())
+					schedule(getId(), SimSettings.getInstance().getLocationLogInterval(), GET_UAV_LOCATION_LOG);
 				break;
 			case PRINT_PROGRESS:
 				// Display simulation progress as percentage
