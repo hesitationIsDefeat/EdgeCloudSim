@@ -112,6 +112,16 @@ public class SimSettings {
 	private String currentTaskPartitionPolicy;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
+	// ONAT: SAR (Search & Rescue) team parameters (tutorial8). Defaulted to 0/empty
+	// so scenarios that don't define these properties are unaffected.
+	private int NUM_OF_SAR_MEMBERS;
+	private int SAR_TEAM_SIZE;
+	private double SAR_ENTRY_TIME;
+	private double SAR_MOVE_DURATION;
+	private double SAR_STOP_DURATION;
+	private double SAR_MOVE_SPEED;
+	private String[] SAR_APPLICATION_NAMES;
+
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
 	private double EASTERN_BOUND;
@@ -234,6 +244,18 @@ public class SimSettings {
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
+
+			// ONAT: SAR (Search & Rescue) team parameters - only used by tutorial8
+			NUM_OF_SAR_MEMBERS = Integer.parseInt(prop.getProperty("number_of_sar_members", "0"));
+			SAR_TEAM_SIZE = Integer.parseInt(prop.getProperty("sar_team_size", "4"));
+			SAR_ENTRY_TIME = (double)60 * Double.parseDouble(prop.getProperty("sar_entry_time", "0")); //minutes -> seconds
+			SAR_MOVE_DURATION = Double.parseDouble(prop.getProperty("sar_move_duration", "60")); //seconds
+			SAR_STOP_DURATION = Double.parseDouble(prop.getProperty("sar_stop_duration", "90")); //seconds
+			SAR_MOVE_SPEED = Double.parseDouble(prop.getProperty("sar_move_speed", "2.0")); //m/s
+			String sarAppNamesProp = prop.getProperty("sar_application_names", "").trim();
+			SAR_APPLICATION_NAMES = sarAppNamesProp.isEmpty() ? new String[0] : sarAppNamesProp.split(",");
+			for (int i = 0; i < SAR_APPLICATION_NAMES.length; i++)
+				SAR_APPLICATION_NAMES[i] = SAR_APPLICATION_NAMES[i].trim();
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -579,6 +601,48 @@ public class SimSettings {
     public String getMeetingPointAssignmentPolicy()
     {
         return MEETING_POINT_ASSIGNMENT_POLICY;
+    }
+
+    /** ONAT: number of SAR team members (tutorial8 only, in addition to the swept normal-user population) */
+    public int getNumOfSarMembers()
+    {
+        return NUM_OF_SAR_MEMBERS;
+    }
+
+    /** ONAT: number of SAR members that move together as a fixed team */
+    public int getSarTeamSize()
+    {
+        return SAR_TEAM_SIZE;
+    }
+
+    /** ONAT: simulation time (in seconds) at which SAR teams enter the scenario */
+    public double getSarEntryTime()
+    {
+        return SAR_ENTRY_TIME;
+    }
+
+    /** ONAT: duration (in seconds) of the SAR team's random-walk "move" phase */
+    public double getSarMoveDuration()
+    {
+        return SAR_MOVE_DURATION;
+    }
+
+    /** ONAT: duration (in seconds) of the SAR team's stationary "stop" phase */
+    public double getSarStopDuration()
+    {
+        return SAR_STOP_DURATION;
+    }
+
+    /** ONAT: SAR team movement speed (m/s) during the move phase */
+    public double getSarMoveSpeed()
+    {
+        return SAR_MOVE_SPEED;
+    }
+
+    /** ONAT: application names (as defined in applications.xml) reserved for SAR members */
+    public String[] getSarApplicationNames()
+    {
+        return SAR_APPLICATION_NAMES;
     }
 
 	public String[] getTaskPartitionPolicies()
