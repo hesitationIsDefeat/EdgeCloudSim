@@ -158,6 +158,9 @@ public class SimLogger {
 	/** List tracking access point network delays over time */
 	private LinkedList<ApDelayLogItem> apDelayList;
 
+	/** ONAT: List tracking UAV (edge server) positions over time, "time;uav_id;x;y" per entry */
+	private LinkedList<String> uavLocationList;
+
 	/** Singleton instance ensuring consistent logging across simulation components */
 	private static SimLogger singleton = new SimLogger();
 	
@@ -373,6 +376,7 @@ public class SimLogger {
 		taskMap = new HashMap<Integer, LogItem>();
 		vmLoadList = new LinkedList<VmLoadLogItem>();
 		apDelayList = new LinkedList<ApDelayLogItem>();
+		uavLocationList = new LinkedList<String>();
 		
 		numOfAppTypes = SimSettings.getInstance().getTaskLookUpTable().length;
 		
@@ -635,6 +639,21 @@ public class SimLogger {
 	}
 
 	/**
+	 * ONAT: Records a UAV's (edge server's) position at the given time, so that its
+	 * movement can be visualized the same way as mobile device positions.
+	 * Only records if file logging and location logging are enabled.
+	 *
+	 * @param time current simulation time
+	 * @param uavId identifier of the UAV (edge host id)
+	 * @param x current X position of the UAV
+	 * @param y current Y position of the UAV
+	 */
+	public void addUavLocationLog(double time, int uavId, int x, int y) {
+		if(fileLogEnabled && SimSettings.getInstance().getLocationLogInterval() != 0)
+			uavLocationList.add(time + SimSettings.DELIMITER + uavId + SimSettings.DELIMITER + x + SimSettings.DELIMITER + y);
+	}
+
+	/**
 	 * Records access point network delay measurements over time.
 	 * 
 	 * <p>Logs upload and download delays for all access points to analyze
@@ -672,9 +691,9 @@ public class SimLogger {
 	 */
 	public void simStopped() throws IOException {
 		endTime = System.currentTimeMillis();
-		File vmLoadFile = null, locationFile = null, userLocationFile = null, apUploadDelayFile = null, apDownloadDelayFile = null;
-		FileWriter vmLoadFW = null, locationFW = null, userLocationFW = null, apUploadDelayFW = null, apDownloadDelayFW = null;
-		BufferedWriter vmLoadBW = null, locationBW = null, userLocationBW = null, apUploadDelayBW = null, apDownloadDelayBW = null;
+		File vmLoadFile = null, locationFile = null, userLocationFile = null, uavLocationFile = null, apUploadDelayFile = null, apDownloadDelayFile = null;
+		FileWriter vmLoadFW = null, locationFW = null, userLocationFW = null, uavLocationFW = null, apUploadDelayFW = null, apDownloadDelayFW = null;
+		BufferedWriter vmLoadBW = null, locationBW = null, userLocationBW = null, uavLocationBW = null, apUploadDelayBW = null, apDownloadDelayBW = null;
 
 		// Save generic results to file for each app type. last index is average
 		// of all app types
@@ -695,6 +714,10 @@ public class SimLogger {
 			userLocationFile = new File(outputFolder, filePrefix + "_USER_LOCATIONS.log");
 			userLocationFW = new FileWriter(userLocationFile, true);
 			userLocationBW = new BufferedWriter(userLocationFW);
+
+			uavLocationFile = new File(outputFolder, filePrefix + "_UAV_LOCATIONS.log");
+			uavLocationFW = new FileWriter(uavLocationFile, true);
+			uavLocationBW = new BufferedWriter(uavLocationFW);
 
 			apUploadDelayFile = new File(outputFolder, filePrefix + "_AP_UPLOAD_DELAY.log");
 			apUploadDelayFW = new FileWriter(apUploadDelayFile, true);
@@ -724,6 +747,7 @@ public class SimLogger {
 			appendToFile(vmLoadBW, "#auto generated file!");
 			appendToFile(locationBW, "#auto generated file!");
 			appendToFile(userLocationBW, "#auto generated file!");
+			appendToFile(uavLocationBW, "#auto generated file!");
 			appendToFile(apUploadDelayBW, "#auto generated file!");
 			appendToFile(apDownloadDelayBW, "#auto generated file!");
 		}
@@ -840,7 +864,11 @@ public class SimLogger {
 					locationBW.newLine();
 				}
 			}
-			
+
+			// ONAT: write the UAV (edge server) positions recorded live during the simulation
+			for (String entry : uavLocationList)
+				appendToFile(uavLocationBW, entry);
+
 			// write delay info to file for each access point
 			if(SimSettings.getInstance().getApDelayLogInterval() != 0) {
 				for (ApDelayLogItem entry : apDelayList) {
@@ -994,6 +1022,7 @@ public class SimLogger {
 			vmLoadBW.close();
 			locationBW.close();
 			userLocationBW.close();
+			uavLocationBW.close();
 			apUploadDelayBW.close();
 			apDownloadDelayBW.close();
 			for (int i = 0; i < numOfAppTypes + 1; i++) {
