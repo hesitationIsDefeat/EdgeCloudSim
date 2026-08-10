@@ -1,33 +1,37 @@
 <?xml version="1.0"?>
 <applications>
-	<application name="DISASTER_MAP_FUSION">
-		<usage_percentage>50</usage_percentage>
-		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>2</poisson_interarrival>
+	<!-- ONAT: Basic normal-user workload. Tutorial6 represents ordinary civilians using
+	     their phones for everyday messaging - not the SAR teams' disaster-response apps
+	     (DISASTER_MAP_FUSION / SITUATION_AWARENESS_ALERTS), which now live in tutorial8
+	     alongside these normal users. -->
+	<application name="TEXT_MESSAGE">
+		<usage_percentage>70</usage_percentage>
+		<prob_cloud_selection>80</prob_cloud_selection>
+		<poisson_interarrival>8</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
-		<active_period>45</active_period>
-		<idle_period>15</idle_period>
-		<data_upload>1800</data_upload>
-		<data_download>200</data_download>
-		<task_length>16000</task_length>
+		<active_period>30</active_period>
+		<idle_period>60</idle_period>
+		<data_upload>20</data_upload>
+		<data_download>20</data_download>
+		<task_length>200</task_length>
 		<required_core>1</required_core>
-		<vm_utilization_on_edge>6.5</vm_utilization_on_edge>
-		<vm_utilization_on_cloud>0.65</vm_utilization_on_cloud>
+		<vm_utilization_on_edge>0.2</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>0.02</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
 	</application>
-	<application name="SITUATION_AWARENESS_ALERTS">
-		<usage_percentage>50</usage_percentage>
-		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>6</poisson_interarrival>
+	<application name="PHOTO_MESSAGE">
+		<usage_percentage>30</usage_percentage>
+		<prob_cloud_selection>60</prob_cloud_selection>
+		<poisson_interarrival>25</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
 		<active_period>20</active_period>
-		<idle_period>40</idle_period>
-		<data_upload>150</data_upload>
-		<data_download>400</data_download>
-		<task_length>2500</task_length>
+		<idle_period>90</idle_period>
+		<data_upload>500</data_upload>
+		<data_download>100</data_download>
+		<task_length>800</task_length>
 		<required_core>1</required_core>
-		<vm_utilization_on_edge>1.2</vm_utilization_on_edge>
-		<vm_utilization_on_cloud>0.12</vm_utilization_on_cloud>
+		<vm_utilization_on_edge>0.8</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>0.08</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
 	</application>
 </applications>
