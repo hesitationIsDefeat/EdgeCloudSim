@@ -141,12 +141,13 @@ def _parse_args():
         description='Generate a video of the client density heat map over the course of the simulation.')
     parser.add_argument('--scenario', default=None, choices=config['scenario_types'],
                          help='UAV mobility policy to visualize. If omitted, a video is generated for every policy.')
-    parser.add_argument('--num-devices', type=int, default=config['max_devices'],
-                         help='Number of mobile devices of the simulation to visualize.')
+    parser.add_argument('--num-devices', type=int, nargs='+', default=None,
+                         help='Number(s) of mobile devices of the simulation to visualize. '
+                              'If omitted, videos are generated for both the minimum and maximum device counts.')
     parser.add_argument('--iteration', type=int, default=1, help='Simulation iteration (ite<N>) to visualize.')
     parser.add_argument('--grid-size', type=int, default=40, help='Number of heat map bins per axis.')
     parser.add_argument('--fps', type=int, default=5, help='Frames per second of the generated video.')
-    parser.add_argument('--output', default=None, help='Output video file path (only valid with a single --scenario).')
+    parser.add_argument('--output', default=None, help='Output video file path (only valid with a single --scenario and --num-devices).')
     return parser.parse_args()
 
 
@@ -157,8 +158,12 @@ if __name__ == '__main__':
 
     # ONAT: render every UAV mobility policy unless the user asked for a specific one.
     scenarios_to_render = [args.scenario] if args.scenario else config['scenario_types']
+    # ONAT: default to both device count extremes so a single run covers the light and heavy load cases.
+    device_counts_to_render = args.num_devices if args.num_devices else [config['min_devices'], config['max_devices']]
+    single_output = len(scenarios_to_render) == 1 and len(device_counts_to_render) == 1
     for scenario in scenarios_to_render:
-        generate_user_location_heatmap_video(scenario=scenario, num_devices=args.num_devices,
-                                              iteration=args.iteration, grid_size=args.grid_size,
-                                              fps=args.fps,
-                                              output_path=args.output if len(scenarios_to_render) == 1 else None)
+        for num_devices in device_counts_to_render:
+            generate_user_location_heatmap_video(scenario=scenario, num_devices=num_devices,
+                                                  iteration=args.iteration, grid_size=args.grid_size,
+                                                  fps=args.fps,
+                                                  output_path=args.output if single_output else None)
