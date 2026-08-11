@@ -7,8 +7,8 @@ def get_configuration():
         'folder_path': '../../../sim_results/tutorial8',
         'num_iterations': 10,
         'x_tick_interval': 1,
-        'scenario_types': ['NO', 'RANDOM', 'LOCAL', 'ASSIGNED_LOCAL'],
-        'legends': ['NO', 'RND', 'LOCAL', 'ASSIGNED'],
+        'scenario_types': ['NO', 'RANDOM', 'LOCAL', 'ASSIGNED_LOCAL', 'LOCAL_FORCE'],
+        'legends': ['NO', 'RND', 'LOCAL', 'ASSIGNED', 'LOCAL_FORCE'],
         'figure_position': [6, 3, 15, 15],  # [left, bottom, width, height] in centimeters
         'font_sizes': [13, 12, 12],  # [xy_label, legend, xy_axis_ticks]
         'x_axis_label': 'Number of Clients',
@@ -28,11 +28,12 @@ def get_configuration():
             [0, 0.15, 0.6],     # Color for second line
             [0, 0.23, 0],       # Color for third line
             [0.6, 0, 0.6],      # Color for fourth line
-            [0.08, 0.08, 0.08]  # Color for fifth line
+            [0.08, 0.08, 0.08], # Color for fifth line
+            [0, 0.6, 0.2]       # Color for sixth line
         ],
         # Line styles and markers for colorless plots
-        'bw_markers': ['-k*', '-ko', '--ks', ':k^', '-.kd'],
+        'bw_markers': ['-k*', '-ko', '--ks', ':k^', '-.kd', '-kv'],
         # Line styles and markers for colorful plots
-        'color_markers': ['-*', '-o', '--s', ':^', '-.d']
+        'color_markers': ['-*', '-o', '--s', ':^', '-.d', '-v']
     }
     return config
