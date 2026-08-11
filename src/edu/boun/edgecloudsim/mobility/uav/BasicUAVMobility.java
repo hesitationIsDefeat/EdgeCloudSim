@@ -21,10 +21,20 @@ import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
 public class BasicUAVMobility extends UAVMobilityModel{
     private String uavMobilityOption;
 
+    // ONAT: LOCAL_FORCE tuning - UAVs farther apart than this don't repel each other
+    private static final double COORDINATION_RADIUS = 2 * UAV.SERVICE_RADIUS;
+    // ONAT: LOCAL_FORCE tuning - inverse-square repulsion strength between UAVs
+    private static final double REPULSION_GAIN = 20000;
+
     // ONAT: Fixed, non-overlapping group of mobile device IDs assigned to each
     // UAV under the ASSIGNED_LOCAL policy. Populated once at startEntity() and
     // never updated afterwards - membership does not depend on distance.
     private final Map<UAV, List<Integer>> assignedUsers = new HashMap<>();
+
+    // ONAT: All UAVs in the scenario, cached once so LOCAL_FORCE can cheaply
+    // check other UAVs' positions on every move event without re-walking the
+    // datacenter/host tree.
+    private List<UAV> allUavs = Collections.emptyList();
 
     public BasicUAVMobility(String uavMobilityOption) {
         super();
@@ -38,16 +48,16 @@ public class BasicUAVMobility extends UAVMobilityModel{
     // ONAT: Create first edge server move events
     @Override
     public void startEntity() {
-        List<UAV> uavs = this.edgeServerManager.getDatacenterList().stream()
+        this.allUavs = this.edgeServerManager.getDatacenterList().stream()
                 .flatMap(datacenter -> datacenter.getHostList().stream())
                 .map(uav -> (UAV) uav)
                 .toList();
 
         if (this.uavMobilityOption.equals("ASSIGNED_LOCAL")) {
-            assignUsersToUAVs(uavs);
+            assignUsersToUAVs(this.allUavs);
         }
 
-        uavs.forEach(this::scheduleNextMoveEvent);
+        this.allUavs.forEach(this::scheduleNextMoveEvent);
     }
 
     // ONAT: Splits every mobile device into equal-sized (round-robin), non-
@@ -135,6 +145,68 @@ public class BasicUAVMobility extends UAVMobilityModel{
                     // ONAT: Randomize the sign
                     int deltaSign = RNG.nextBoolean() ? 1 : -1;
                     // ONAT: Combine them to find the change in the position
+                    int delta = deltaMagnitude * deltaSign;
+
+                    if (RNG.nextBoolean()) {
+                        newX += delta;
+                    } else {
+                        newY += delta;
+                    }
+                }
+            }
+            case "LOCAL_FORCE" -> {
+                // ONAT: Same local-user attraction as LOCAL, plus a repulsive force from
+                // other UAVs within COORDINATION_RADIUS so two UAVs drawn to the same
+                // user cluster settle apart instead of converging on the same spot -
+                // a decentralized force-balance (virtual force / potential field) approach.
+                double sumX = 0;
+                double sumY = 0;
+                int userCount = 0;
+
+                for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
+                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+
+                    if (SimUtils.getEuclideanDistance(currentLocation, deviceLoc) <= UAV.SERVICE_RADIUS) {
+                        sumX += deviceLoc.getXPos();
+                        sumY += deviceLoc.getYPos();
+                        userCount++;
+                    }
+                }
+
+                double attractX = 0;
+                double attractY = 0;
+                if (userCount > 0) {
+                    attractX = (sumX / userCount) - currentLocation.getXPos();
+                    attractY = (sumY / userCount) - currentLocation.getYPos();
+                }
+
+                double repelX = 0;
+                double repelY = 0;
+                for (UAV other : allUavs) {
+                    if (other == uav) continue;
+
+                    Location otherLoc = other.getLocation();
+                    double distance = SimUtils.getEuclideanDistance(currentLocation, otherLoc);
+                    if (distance > 0 && distance <= COORDINATION_RADIUS) {
+                        double strength = REPULSION_GAIN / (distance * distance);
+                        repelX += (currentLocation.getXPos() - otherLoc.getXPos()) / distance * strength;
+                        repelY += (currentLocation.getYPos() - otherLoc.getYPos()) / distance * strength;
+                    }
+                }
+
+                double vectorX = attractX + repelX;
+                double vectorY = attractY + repelY;
+                double distanceToTarget = Math.sqrt(vectorX * vectorX + vectorY * vectorY);
+
+                if (distanceToTarget > 0) {
+                    double maxSpeed = uav.getMaxMoveDistance();
+                    double ratio = Math.min(1.0, maxSpeed / distanceToTarget);
+                    newX += (int) (vectorX * ratio);
+                    newY += (int) (vectorY * ratio);
+                } else if (userCount == 0) {
+                    // ONAT: nothing to attract to or repel from - random walk like LOCAL
+                    int deltaMagnitude = RNG.nextInt((int) uav.getMaxMoveDistance()) + 1;
+                    int deltaSign = RNG.nextBoolean() ? 1 : -1;
                     int delta = deltaMagnitude * deltaSign;
 
                     if (RNG.nextBoolean()) {
