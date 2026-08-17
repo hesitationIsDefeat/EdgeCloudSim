@@ -216,6 +216,70 @@ public class BasicUAVMobility extends UAVMobilityModel{
                     }
                 }
             }
+            case "VORONOI" -> {
+                // ONAT: Decentralized centroidal-Voronoi coverage control (Cortes et al.):
+                // each UAV independently partitions ALL users by nearest UAV (using only
+                // every UAV's current position, no user-level coordination or controller)
+                // and chases the centroid of its own cell. Unlike LOCAL/LOCAL_FORCE this
+                // isn't capped by SERVICE_RADIUS - the nearest-UAV partition itself is what
+                // prevents overlap/convergence, since a user belongs to exactly one cell.
+                double sumX = 0;
+                double sumY = 0;
+                int userCount = 0;
+
+                for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
+                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+
+                    UAV nearestUav = uav;
+                    double nearestDistance = SimUtils.getEuclideanDistance(currentLocation, deviceLoc);
+                    for (UAV other : allUavs) {
+                        if (other == uav) continue;
+                        double distance = SimUtils.getEuclideanDistance(other.getLocation(), deviceLoc);
+                        if (distance < nearestDistance) {
+                            nearestDistance = distance;
+                            nearestUav = other;
+                        }
+                    }
+
+                    if (nearestUav == uav) {
+                        sumX += deviceLoc.getXPos();
+                        sumY += deviceLoc.getYPos();
+                        userCount++;
+                    }
+                }
+
+                if (userCount > 0) {
+                    double targetX = sumX / userCount;
+                    double targetY = sumY / userCount;
+
+                    double vectorX = targetX - currentLocation.getXPos();
+                    double vectorY = targetY - currentLocation.getYPos();
+                    double distanceToTarget = Math.sqrt(vectorX * vectorX + vectorY * vectorY);
+
+                    double maxSpeed = uav.getMaxMoveDistance();
+
+                    // ONAT: Cap the movement speed
+                    if (distanceToTarget > maxSpeed) {
+                        double ratio = maxSpeed / distanceToTarget;
+                        newX += (int) (vectorX * ratio);
+                        newY += (int) (vectorY * ratio);
+                    } else {
+                        newX = (int) targetX;
+                        newY = (int) targetY;
+                    }
+                } else {
+                    // ONAT: Empty Voronoi cell (no user is closest to this UAV) - random walk like LOCAL
+                    int deltaMagnitude = RNG.nextInt((int) uav.getMaxMoveDistance()) + 1;
+                    int deltaSign = RNG.nextBoolean() ? 1 : -1;
+                    int delta = deltaMagnitude * deltaSign;
+
+                    if (RNG.nextBoolean()) {
+                        newX += delta;
+                    } else {
+                        newY += delta;
+                    }
+                }
+            }
             case "ASSIGNED_LOCAL" -> {
                 // ONAT: Centralize among this UAV's permanently assigned users,
                 // regardless of whether they are currently within its own
