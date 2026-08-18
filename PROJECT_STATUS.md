@@ -69,11 +69,11 @@ flowchart TB
 ### `mobility/` — device movement
 | Class | Role |
 |---|---|
-| `MobilityModel` (abstract) | `initialize()` + `getLocation(deviceId, time)`. Base for **mobile user** movement. |
+| `MobilityModel` (abstract) | `initialize()` + `getLocation(deviceId, time)` + `isActive(deviceId, time)` (default `true`; override to report a device as not-yet-present, e.g. a staged population before its entry time — see `tutorial8.SARTeamMobilityModel`). Base for **mobile user** movement. |
 | `NomadicMobility` | Discrete place-to-place movement (devices "teleport" between hotspots after exponential dwell time), reading place types from `edge_devices.xml`. |
 | `mobility/uav/UAVMobilityModel` (abstract `SimEntity`) | Base for **edge-server (UAV) movement**. Event-driven (`SimSettings.EDGE_SERVER_MOVE` tag) rather than pure `getLocation()` lookup — moves are scheduled and applied to `UAV.setPlace()`. |
 | `mobility/uav/DefaultUAVMobility` | No-op implementation — makes edge servers static. Returned by `ScenarioFactory.getEdgeMobilityModel()`'s default method, so it's what every pre-UAV tutorial (1–5) effectively gets. |
-| `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` is a big `switch` over policy names: `NO`, `RANDOM`, `LOCAL` (chase centroid of users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `VORONOI` (decentralized centroidal-Voronoi coverage control — each UAV partitions ALL users by nearest-UAV using only every UAV's current position, then chases its own cell's centroid; no `SERVICE_RADIUS` cap since the partition itself prevents overlap), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). Caches `allUavs` once in `startEntity()`. |
+| `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` is a big `switch` over policy names: `NO`, `RANDOM`, `LOCAL` (chase centroid of *active* users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `VORONOI` (decentralized centroidal-Voronoi coverage control — each UAV partitions all *active* users by nearest-UAV using only every UAV's current position, then chases its own cell's centroid; no `SERVICE_RADIUS` cap since the partition itself prevents overlap), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). All of `LOCAL`/`LOCAL_FORCE`/`VORONOI`/`ASSIGNED_LOCAL` skip devices where `MobilityModel.isActive(deviceId, time)` is false, so a staged population (e.g. SAR members before `sar_entry_time`) can't trap/skew a UAV. Caches `allUavs` once in `startEntity()`. Only tutorial8 sweeps `LOCAL_FORCE`/`VORONOI` (`NO`/`RANDOM` too); `LOCAL`/`ASSIGNED_LOCAL` remain available in the shared switch (tutorial6/7 still use them) but were dropped from tutorial8's `uav_mobility_options`/plotting config. |
 | Application-level mobility models (not in `mobility/`, live under `applications/tutorialN/`) | e.g. `tutorial6.ConvergingMobilityModel` (crowd converges onto 3 hardcoded meeting areas, `ROUND_ROBIN`/`CLOSEST` assignment), `tutorial8.SARTeamMobilityModel` (fixed teams, staged entry, MOVE/STOP cycling, formation offsets), `tutorial8.CombinedMobilityModel` (delegates a `deviceId` range to one sub-model each — the pattern to copy for any "second population"). |
 
 ### `task_generator/` — workload generation
@@ -204,6 +204,13 @@ abstract base classes.
    per-UAV from `allUavs` each move event (O(numUAVs) per user) rather than using a fixed
    `SERVICE_RADIUS` cutoff — copy it if a new policy needs full-coverage partitioning
    instead of a local reaction radius.
+6. If the policy averages/partitions user positions, skip devices where
+   `MobilityModel.isActive(deviceId, time)` is false (see §6.5) so a staged
+   subpopulation can't be mistaken for real, present users.
+7. `scripts/tutorial8/python/plotGenericLine.py`'s `plot_generic_line` saves figures as
+   `<metric_name>_<app_type>.pdf` (pass a short PascalCase `metric_name`, e.g.
+   `'FailedTask'`) rather than `<row_offset>_<column_offset>_<app_type>.pdf` — always pass
+   `metric_name` from new caller scripts so filenames stay descriptive.
 
 ### 6.3 New task-partitioning policy/strategy
 Current state (important gotcha): `task_partition_policies` in `.properties` is only a
