@@ -112,7 +112,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
                               label='UAVs', zorder=4)
     ax.set_xlabel('X Position (m)')
     ax.set_ylabel('Y Position (m)')
-    title = ax.set_title(f'Client Density Heat Map (t = {time_steps[0]:.0f}s)')
+    title = ax.set_title(f'{scenario} (t = {time_steps[0]:.0f}s)')
     ax.legend(loc='upper right')
     fig.colorbar(im, ax=ax, label='# of Clients')
     fig.tight_layout()
@@ -121,7 +121,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
         im.set_data(heatmaps[frame_index])
         sar_scatter.set_offsets(sar_positions[frame_index])
         uav_scatter.set_offsets(uav_positions[frame_index])
-        title.set_text(f'Client Density Heat Map (t = {time_steps[frame_index]:.0f}s)')
+        title.set_text(f'{scenario} (t = {time_steps[frame_index]:.0f}s)')
         return im, sar_scatter, uav_scatter, title
 
     ani = animation.FuncAnimation(fig, update, frames=len(time_steps), blit=False)

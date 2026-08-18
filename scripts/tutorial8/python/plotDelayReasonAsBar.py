@@ -83,7 +83,9 @@ def plot_delay_reason(is_edge):
     ax.set_xlabel(config['x_axis_label'])
     ax.set_xticks(device_counts)
     ax.set_xticklabels(device_counts)
-    ax.set_xlim(start_devices - step_devices / 2, end_devices + step_devices / 2)
+    # ONAT: origin at (0,0) instead of a padded/offset left edge
+    ax.set_xlim(0, end_devices + step_devices / 2)
+    ax.set_ylim(bottom=0)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     

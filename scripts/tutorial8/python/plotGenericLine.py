@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
                       calculate_percentage=None, legend_pos='best', divisor=1,
-                      ignore_zero_values=False):
+                      ignore_zero_values=False, metric_name=None):
     """
     Reads simulation data, processes it, and generates a line plot.
     Equivalent to plotGenericLine.m.
@@ -106,14 +106,19 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
     ax.set_ylabel(y_label, fontsize=font_sizes[0])
     ax.legend(fontsize=font_sizes[1], loc=legend_pos)
     ax.tick_params(axis='both', which='major', labelsize=font_sizes[2])
-    ax.set_xlim(start_devices - 50, end_devices + 50)
+    # ONAT: origin at (0,0) instead of a padded/offset left edge
+    ax.set_xlim(0, end_devices + 50)
+    ax.set_ylim(bottom=0)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
 
     # --- Save Figure ---
     if config['save_figure_as_pdf']:
         safe_app_type = app_type.replace(' ', '_')
-        filename = f"{row_offset}_{column_offset}_{safe_app_type}.pdf"
+        # ONAT: fall back to the raw row/column offsets only if the caller didn't
+        # provide a descriptive metric name.
+        safe_metric_name = (metric_name or f"{row_offset}_{column_offset}").replace(' ', '_')
+        filename = f"{safe_metric_name}_{safe_app_type}.pdf"
         output_path = os.path.join(folder_path, filename)
         os.makedirs(folder_path, exist_ok=True)
         fig.savefig(output_path, bbox_inches='tight')
