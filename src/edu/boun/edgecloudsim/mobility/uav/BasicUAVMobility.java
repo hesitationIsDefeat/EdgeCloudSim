@@ -4,6 +4,7 @@ import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
+import edu.boun.edgecloudsim.mobility.MobilityModel;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimLogger;
 import edu.boun.edgecloudsim.utils.SimUtils;
@@ -109,9 +110,15 @@ public class BasicUAVMobility extends UAVMobilityModel{
                 double sumY = 0;
                 int userCount = 0;
                 Location currentLoc = uav.getLocation();
+                double now = CloudSim.clock();
+                MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
 
                 for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
-                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+                    // ONAT: Ignore devices that haven't entered the scenario yet (e.g. staged SAR
+                    // members still parked at a fixed corner) so they can't trap or skew a UAV.
+                    if (!mobilityModel.isActive(mobileDeviceId, now)) continue;
+
+                    Location deviceLoc = mobilityModel.getLocation(mobileDeviceId, now);
 
                     // ONAT: Check if user is within this UAV's specific Service Radius
                     if (SimUtils.getEuclideanDistance(currentLoc, deviceLoc) <= UAV.SERVICE_RADIUS) {
@@ -162,9 +169,14 @@ public class BasicUAVMobility extends UAVMobilityModel{
                 double sumX = 0;
                 double sumY = 0;
                 int userCount = 0;
+                double now = CloudSim.clock();
+                MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
 
                 for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
-                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+                    // ONAT: Ignore devices that haven't entered the scenario yet.
+                    if (!mobilityModel.isActive(mobileDeviceId, now)) continue;
+
+                    Location deviceLoc = mobilityModel.getLocation(mobileDeviceId, now);
 
                     if (SimUtils.getEuclideanDistance(currentLocation, deviceLoc) <= UAV.SERVICE_RADIUS) {
                         sumX += deviceLoc.getXPos();
@@ -226,9 +238,15 @@ public class BasicUAVMobility extends UAVMobilityModel{
                 double sumX = 0;
                 double sumY = 0;
                 int userCount = 0;
+                double now = CloudSim.clock();
+                MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
 
                 for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
-                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+                    // ONAT: Devices that haven't entered yet don't get a Voronoi cell claimed
+                    // by anyone, so a stationary staged population can't trap a UAV.
+                    if (!mobilityModel.isActive(mobileDeviceId, now)) continue;
+
+                    Location deviceLoc = mobilityModel.getLocation(mobileDeviceId, now);
 
                     UAV nearestUav = uav;
                     double nearestDistance = SimUtils.getEuclideanDistance(currentLocation, deviceLoc);
@@ -292,9 +310,14 @@ public class BasicUAVMobility extends UAVMobilityModel{
                 double sumX = 0;
                 double sumY = 0;
                 int userCount = 0;
+                double now = CloudSim.clock();
+                MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
 
                 for (int mobileDeviceId : myUsers) {
-                    Location deviceLoc = SimManager.getInstance().getMobilityModel().getLocation(mobileDeviceId, CloudSim.clock());
+                    // ONAT: Ignore devices that haven't entered the scenario yet.
+                    if (!mobilityModel.isActive(mobileDeviceId, now)) continue;
+
+                    Location deviceLoc = mobilityModel.getLocation(mobileDeviceId, now);
                     sumX += deviceLoc.getXPos();
                     sumY += deviceLoc.getYPos();
                     userCount++;
