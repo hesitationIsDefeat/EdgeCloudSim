@@ -120,8 +120,8 @@ public class SampleScenarioFactory implements ScenarioFactory {
     /**
      * Creates the UAV mobility model. Unchanged from tutorial6: since both
      * populations share a single device-id space via {@link CombinedMobilityModel},
-     * the LOCAL/ASSIGNED_LOCAL UAV tracking policies (which iterate over every
-     * mobile device id) automatically take SAR members into account as well,
+     * the LOCAL_FORCE/VORONOI UAV tracking policies swept in tutorial8 (which iterate
+     * over every mobile device id) automatically take SAR members into account as well,
      * once they have entered the scenario.
      */
     @Override
