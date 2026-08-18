@@ -76,4 +76,20 @@ public abstract class MobilityModel {
 	 * @return Location object containing coordinates and associated edge server information
 	 */
 	public abstract Location getLocation(int deviceId, double time);
+
+	/**
+	 * ONAT: Whether this device has actually joined the scenario at the given time,
+	 * as opposed to merely holding a placeholder/staging location (e.g. a
+	 * not-yet-entered population parked at a fixed corner). Location-consuming code
+	 * (e.g. UAV mobility policies that average/partition user positions) should skip
+	 * inactive devices so a stationary group of "phantom" users can't distort or trap
+	 * their behavior. Defaults to true since most mobility models have no staging phase.
+	 *
+	 * @param deviceId Unique identifier of the mobile device
+	 * @param time Simulation time to check (in seconds)
+	 * @return true if the device should be treated as present in the scenario
+	 */
+	public boolean isActive(int deviceId, double time) {
+		return true;
+	}
 }
