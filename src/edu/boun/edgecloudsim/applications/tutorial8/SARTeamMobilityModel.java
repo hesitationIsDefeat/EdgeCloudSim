@@ -204,4 +204,12 @@ public class SARTeamMobilityModel extends MobilityModel {
 
         return e.getValue();
     }
+
+    // ONAT: Before entryTime the member is just sitting at the staging point, not
+    // actually part of the scenario yet - callers that average/partition user
+    // positions (e.g. UAV mobility) should not treat it as a real, present user.
+    @Override
+    public boolean isActive(int deviceId, double time) {
+        return time >= entryTime;
+    }
 }

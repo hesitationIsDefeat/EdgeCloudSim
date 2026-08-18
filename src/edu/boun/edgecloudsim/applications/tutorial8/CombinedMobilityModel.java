@@ -47,4 +47,12 @@ public class CombinedMobilityModel extends MobilityModel {
 
         return sarTeamMobility.getLocation(deviceId - numOfNormalUsers, time);
     }
+
+    @Override
+    public boolean isActive(int deviceId, double time) {
+        if (deviceId < numOfNormalUsers)
+            return normalUserMobility.isActive(deviceId, time);
+
+        return sarTeamMobility.isActive(deviceId - numOfNormalUsers, time);
+    }
 }
