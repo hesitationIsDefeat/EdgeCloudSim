@@ -92,4 +92,20 @@ public abstract class MobilityModel {
 	public boolean isActive(int deviceId, double time) {
 		return true;
 	}
+
+	/**
+	 * ONAT: Relative weight this device's position should have when location-consuming
+	 * code (e.g. UAV coverage policies) averages/centroids multiple users together -
+	 * e.g. a value of 4.0 means this device counts as 4 "ordinary" users. Defaults to
+	 * 1.0 (every device weighted equally) since most mobility models have no notion of
+	 * priority; override to give a subpopulation more pull (see
+	 * {@code tutorial8.SARTeamMobilityModel}).
+	 *
+	 * @param deviceId Unique identifier of the mobile device
+	 * @param time Simulation time to check (in seconds)
+	 * @return the device's priority weight, 1.0 by default
+	 */
+	public double getPriority(int deviceId, double time) {
+		return 1.0;
+	}
 }
