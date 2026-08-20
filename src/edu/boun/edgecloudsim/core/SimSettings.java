@@ -121,6 +121,10 @@ public class SimSettings {
 	private double SAR_STOP_DURATION;
 	private double SAR_MOVE_SPEED;
 	private String[] SAR_APPLICATION_NAMES;
+	// ONAT: relative weight of a SAR member's position vs. a normal user's when UAV
+	// policies (e.g. VORONOI) average/centroid users together. Defaults to 1.0 (no
+	// priority difference) so tutorials that don't set this are unaffected.
+	private double SAR_PRIORITY_FACTOR;
 
 	// Geographic simulation boundaries
 	private double NORTHERN_BOUND;
@@ -256,6 +260,7 @@ public class SimSettings {
 			SAR_APPLICATION_NAMES = sarAppNamesProp.isEmpty() ? new String[0] : sarAppNamesProp.split(",");
 			for (int i = 0; i < SAR_APPLICATION_NAMES.length; i++)
 				SAR_APPLICATION_NAMES[i] = SAR_APPLICATION_NAMES[i].trim();
+			SAR_PRIORITY_FACTOR = Double.parseDouble(prop.getProperty("sar_priority_factor", "1.0"));
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -643,6 +648,12 @@ public class SimSettings {
     public String[] getSarApplicationNames()
     {
         return SAR_APPLICATION_NAMES;
+    }
+
+    /** ONAT: relative weight of a SAR member's position vs. a normal user's in UAV coverage policies (e.g. VORONOI) */
+    public double getSarPriorityFactor()
+    {
+        return SAR_PRIORITY_FACTOR;
     }
 
 	public String[] getTaskPartitionPolicies()
