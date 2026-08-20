@@ -94,9 +94,23 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	@Override
 	public MobilityModel getMobilityModel() {
 		SimSettings SS = SimSettings.getInstance();
+
+		// ONAT: "VORONOI_<factor>" (e.g. "VORONOI_2") explicitly overrides the SAR
+		// priority weight for that run, regardless of sar_priority_factor - this is
+		// what lets a single MainApp sweep compare several priority factors under
+		// distinct, self-describing result file names. Bare "VORONOI" (and every
+		// other UAV mobility policy) keeps using the configured sar_priority_factor.
+		double sarPriorityFactor = SS.getSarPriorityFactor();
+		if (BasicUAVMobility.isVoronoiPolicy(uavMobilityOption)) {
+			Double explicitFactor = BasicUAVMobility.parseExplicitPriorityFactor(uavMobilityOption);
+			if (explicitFactor != null)
+				sarPriorityFactor = explicitFactor;
+		}
+
 		return new CombinedMobilityModel(numOfNormalUsers, numOfSarMembers, simulationTime,
 				SS.getMeetingPointAssignmentPolicy(), SS.getSarTeamSize(), SS.getSarEntryTime(),
-				SS.getSarMoveDuration(), SS.getSarStopDuration(), SS.getSarMoveSpeed());
+				SS.getSarMoveDuration(), SS.getSarStopDuration(), SS.getSarMoveSpeed(),
+				sarPriorityFactor);
 	}
 
 	/**
