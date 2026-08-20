@@ -69,11 +69,11 @@ flowchart TB
 ### `mobility/` — device movement
 | Class | Role |
 |---|---|
-| `MobilityModel` (abstract) | `initialize()` + `getLocation(deviceId, time)` + `isActive(deviceId, time)` (default `true`; override to report a device as not-yet-present, e.g. a staged population before its entry time — see `tutorial8.SARTeamMobilityModel`). Base for **mobile user** movement. |
+| `MobilityModel` (abstract) | `initialize()` + `getLocation(deviceId, time)` + `isActive(deviceId, time)` (default `true`; override to report a device as not-yet-present, e.g. a staged population before its entry time — see `tutorial8.SARTeamMobilityModel`) + `getPriority(deviceId, time)` (default `1.0`; relative weight this device's position should carry when location-consuming code centroids/averages multiple users together, e.g. `4.0` = counts as 4 ordinary users — see `tutorial8.SARTeamMobilityModel`/`VORONOI`). Base for **mobile user** movement. |
 | `NomadicMobility` | Discrete place-to-place movement (devices "teleport" between hotspots after exponential dwell time), reading place types from `edge_devices.xml`. |
 | `mobility/uav/UAVMobilityModel` (abstract `SimEntity`) | Base for **edge-server (UAV) movement**. Event-driven (`SimSettings.EDGE_SERVER_MOVE` tag) rather than pure `getLocation()` lookup — moves are scheduled and applied to `UAV.setPlace()`. |
 | `mobility/uav/DefaultUAVMobility` | No-op implementation — makes edge servers static. Returned by `ScenarioFactory.getEdgeMobilityModel()`'s default method, so it's what every pre-UAV tutorial (1–5) effectively gets. |
-| `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` is a big `switch` over policy names: `NO`, `RANDOM`, `LOCAL` (chase centroid of *active* users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `VORONOI` (decentralized centroidal-Voronoi coverage control — each UAV partitions all *active* users by nearest-UAV using only every UAV's current position, then chases its own cell's centroid; no `SERVICE_RADIUS` cap since the partition itself prevents overlap), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). All of `LOCAL`/`LOCAL_FORCE`/`VORONOI`/`ASSIGNED_LOCAL` skip devices where `MobilityModel.isActive(deviceId, time)` is false, so a staged population (e.g. SAR members before `sar_entry_time`) can't trap/skew a UAV. Caches `allUavs` once in `startEntity()`. Only tutorial8 sweeps `LOCAL_FORCE`/`VORONOI` (`NO`/`RANDOM` too); `LOCAL`/`ASSIGNED_LOCAL` remain available in the shared switch (tutorial6/7 still use them) but were dropped from tutorial8's `uav_mobility_options`/plotting config. |
+| `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` first checks `isVoronoiPolicy(uavMobilityOption)` (true for `"VORONOI"` or any `"VORONOI_<factor>"` variant - see §6.2/§6.5) and otherwise falls through to a `switch`: `NO`, `RANDOM`, `LOCAL` (chase centroid of *active* users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). The VORONOI branch: each UAV partitions all *active* users by nearest-UAV using only every UAV's current position, then chases its own cell's centroid, weighted by each user's `MobilityModel.getPriority(...)` so e.g. SAR members can pull the centroid harder than normal users without affecting the nearest-UAV partition itself; no `SERVICE_RADIUS` cap since the partition itself prevents overlap. All of `LOCAL`/`LOCAL_FORCE`/VORONOI/`ASSIGNED_LOCAL` skip devices where `MobilityModel.isActive(deviceId, time)` is false, so a staged population (e.g. SAR members before `sar_entry_time`) can't trap/skew a UAV. Caches `allUavs` once in `startEntity()`. Only tutorial8 sweeps `LOCAL_FORCE`/`VORONOI` (`NO`/`RANDOM` too, plus `VORONOI_2`/`VORONOI_4` in tutorial9); `LOCAL`/`ASSIGNED_LOCAL` remain available in the shared switch (tutorial6/7 still use them) but were dropped from tutorial8/9's `uav_mobility_options`/plotting config. |
 | Application-level mobility models (not in `mobility/`, live under `applications/tutorialN/`) | e.g. `tutorial6.ConvergingMobilityModel` (crowd converges onto 3 hardcoded meeting areas, `ROUND_ROBIN`/`CLOSEST` assignment), `tutorial8.SARTeamMobilityModel` (fixed teams, staged entry, MOVE/STOP cycling, formation offsets), `tutorial8.CombinedMobilityModel` (delegates a `deviceId` range to one sub-model each — the pattern to copy for any "second population"). |
 
 ### `task_generator/` — workload generation
@@ -139,6 +139,7 @@ flowchart TB
 | `tutorial6` | Introduces **UAV mobile edge servers** (`mobility/uav`, `edge_server/uav`, `edge_orchestrator/uav`, `network/uav`) + `ConvergingMobilityModel` (crowd-converges-on-3-areas user mobility). |
 | `tutorial7` | Adds **task partitioning** on top of tutorial6 (sweeps `task_partition_policies` in `MainApp`; `applications.xml` apps carry `partitionable`/`partition_count`/`partition_strategy`). |
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
+| `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -211,6 +212,17 @@ abstract base classes.
    `<metric_name>_<app_type>.pdf` (pass a short PascalCase `metric_name`, e.g.
    `'FailedTask'`) rather than `<row_offset>_<column_offset>_<app_type>.pdf` — always pass
    `metric_name` from new caller scripts so filenames stay descriptive.
+8. **Encoding a numeric parameter in the policy name itself** (rather than a single global
+   scalar config) is how tutorial9 sweeps several SAR priority factors in one run: policy
+   names matching `BasicUAVMobility.isVoronoiPolicy(name)` (`"VORONOI"` or
+   `"VORONOI_<factor>"`, e.g. `"VORONOI_2"`) all route to the *same* VORONOI branch in
+   `processMoveEvent` (the factor never affects the algorithm itself, only
+   `MobilityModel.getPriority(...)`'s weighting - see §6.5); `SampleScenarioFactory.
+   getMobilityModel()` calls `BasicUAVMobility.parseExplicitPriorityFactor(name)` to
+   extract the override (`null` for bare `"VORONOI"`, which then falls back to the
+   configured `sar_priority_factor`). Copy this pattern (parse-suffix-from-policy-name,
+   fall back to a scalar config default) for any new UAV policy that needs a per-sweep-
+   entry numeric knob without a new Java class per value.
 
 ### 6.3 New task-partitioning policy/strategy
 Current state (important gotcha): `task_partition_policies` in `.properties` is only a
