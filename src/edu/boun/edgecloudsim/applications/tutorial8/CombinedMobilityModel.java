@@ -26,12 +26,13 @@ public class CombinedMobilityModel extends MobilityModel {
 
     public CombinedMobilityModel(int numOfNormalUsers, int numOfSarMembers, double simulationTime,
                                   String meetingPointAssignmentPolicy, int sarTeamSize, double sarEntryTime,
-                                  double sarMoveDuration, double sarStopDuration, double sarMoveSpeed) {
+                                  double sarMoveDuration, double sarStopDuration, double sarMoveSpeed,
+                                  double sarPriorityFactor) {
         super(numOfNormalUsers + numOfSarMembers, simulationTime);
         this.numOfNormalUsers = numOfNormalUsers;
         this.normalUserMobility = new ConvergingMobilityModel(numOfNormalUsers, simulationTime, meetingPointAssignmentPolicy);
         this.sarTeamMobility = new SARTeamMobilityModel(numOfSarMembers, simulationTime, sarTeamSize,
-                sarEntryTime, sarMoveDuration, sarStopDuration, sarMoveSpeed);
+                sarEntryTime, sarMoveDuration, sarStopDuration, sarMoveSpeed, sarPriorityFactor);
     }
 
     @Override
@@ -54,5 +55,13 @@ public class CombinedMobilityModel extends MobilityModel {
             return normalUserMobility.isActive(deviceId, time);
 
         return sarTeamMobility.isActive(deviceId - numOfNormalUsers, time);
+    }
+
+    @Override
+    public double getPriority(int deviceId, double time) {
+        if (deviceId < numOfNormalUsers)
+            return normalUserMobility.getPriority(deviceId, time);
+
+        return sarTeamMobility.getPriority(deviceId - numOfNormalUsers, time);
     }
 }

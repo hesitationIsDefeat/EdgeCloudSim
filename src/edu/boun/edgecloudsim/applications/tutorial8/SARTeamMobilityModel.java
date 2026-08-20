@@ -52,6 +52,7 @@ public class SARTeamMobilityModel extends MobilityModel {
     private final double moveDuration;
     private final double stopDuration;
     private final double moveSpeed;
+    private final double priorityFactor;
 
     private List<TreeMap<Double, Location>> treeMapArray;
 
@@ -63,15 +64,18 @@ public class SARTeamMobilityModel extends MobilityModel {
      * @param moveDuration Safety cap (seconds) on how long a single MOVE phase may take
      * @param stopDuration Duration (seconds) of each STOP phase
      * @param moveSpeed Movement speed (m/s) during the MOVE phase
+     * @param priorityFactor Relative weight of a SAR member vs. a normal user in UAV coverage policies
      */
     public SARTeamMobilityModel(int numberOfSarMembers, double simulationTime, int teamSize,
-                                double entryTime, double moveDuration, double stopDuration, double moveSpeed) {
+                                double entryTime, double moveDuration, double stopDuration, double moveSpeed,
+                                double priorityFactor) {
         super(numberOfSarMembers, simulationTime);
         this.teamSize = Math.max(1, teamSize);
         this.entryTime = entryTime;
         this.moveDuration = moveDuration;
         this.stopDuration = stopDuration;
         this.moveSpeed = moveSpeed;
+        this.priorityFactor = priorityFactor;
     }
 
     @Override
@@ -211,5 +215,12 @@ public class SARTeamMobilityModel extends MobilityModel {
     @Override
     public boolean isActive(int deviceId, double time) {
         return time >= entryTime;
+    }
+
+    // ONAT: Every SAR member (still an individual device id/location, just moving in
+    // formation) shares the same configured priority weight.
+    @Override
+    public double getPriority(int deviceId, double time) {
+        return priorityFactor;
     }
 }
