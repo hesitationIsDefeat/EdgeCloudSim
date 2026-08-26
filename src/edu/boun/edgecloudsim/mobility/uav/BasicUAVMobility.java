@@ -65,9 +65,17 @@ public class BasicUAVMobility extends UAVMobilityModel{
     // datacenter/host tree.
     private List<UAV> allUavs = Collections.emptyList();
 
+    // ONAT: All UAVs used to independently redo the SAME nearest-UAV device partition on
+    // every one of their own move events under VORONOI. This computes/caches it once, on
+    // demand, for every UAV to read - see VoronoiPartitioner and
+    // ensureVoronoiPartitionUpToDate() below. Only allocated for a VORONOI-variant
+    // policy - null (and never touched) for every other policy.
+    private final VoronoiPartitioner voronoiPartitioner;
+
     public BasicUAVMobility(String uavMobilityOption) {
         super();
         this.uavMobilityOption = uavMobilityOption;
+        this.voronoiPartitioner = isVoronoiPolicy(uavMobilityOption) ? new VoronoiPartitioner() : null;
     }
     @Override
     public void initialize(EdgeServerManager edgeServerManager) {
@@ -87,6 +95,17 @@ public class BasicUAVMobility extends UAVMobilityModel{
         }
 
         this.allUavs.forEach(this::scheduleNextMoveEvent);
+    }
+
+    // ONAT: Refreshes the shared partition/centroids for the CURRENT simulation time if
+    // nobody has done so yet - see VoronoiPartitioner.ensureUpToDate for why this is safe
+    // to call from every UAV's move event without redoing the work more than once per tick.
+    private void ensureVoronoiPartitionUpToDate() {
+        voronoiPartitioner.ensureUpToDate(
+                allUavs,
+                SimManager.getInstance().getMobilityModel(),
+                SimManager.getInstance().getNumOfMobileDevice(),
+                CloudSim.clock());
     }
 
     // ONAT: Splits every mobile device into equal-sized (round-robin), non-
@@ -120,55 +139,22 @@ public class BasicUAVMobility extends UAVMobilityModel{
         // the factor only affects how SAR members are weighted inside MobilityModel.getPriority(...),
         // set up once in SampleScenarioFactory, so no per-variant branching is needed here.
         if (isVoronoiPolicy(this.uavMobilityOption)) {
-            // ONAT: Decentralized centroidal-Voronoi coverage control (Cortes et al.):
-            // each UAV independently partitions ALL users by nearest UAV (using only
-            // every UAV's current position, no user-level coordination or controller)
-            // and chases the centroid of its own cell. Unlike LOCAL_FORCE this
-            // isn't capped by SERVICE_RADIUS - the nearest-UAV partition itself is what
-            // prevents overlap/convergence, since a user belongs to exactly one cell.
-            // The centroid is weighted by MobilityModel.getPriority(...) so a higher-
-            // priority user (e.g. a SAR member) pulls the centroid more than an
-            // ordinary one, without needing a central authority to enforce it.
-            double sumX = 0;
-            double sumY = 0;
-            double totalWeight = 0;
-            int userCount = 0;
-            double now = CloudSim.clock();
-            MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
+            // ONAT: Decentralized centroidal-Voronoi coverage control (Cortes et al.),
+            // but the nearest-UAV partition and each cell's priority-weighted centroid
+            // are no longer recomputed by every UAV - every UAV used to redo that FULL
+            // scan (over every other UAV, over every device) on its own move event, even
+            // though the result only depends on current UAV positions, not on which UAV
+            // is asking. ensureVoronoiPartitionUpToDate() computes it once per distinct
+            // simulation time - whichever UAV's move event gets here first for "now" does
+            // the recompute, every other UAV moving at that same "now" just reads the
+            // already-fresh cache. Overlap/convergence is still structurally prevented by
+            // the partition itself (each device belongs to exactly one UAV's cell).
+            ensureVoronoiPartitionUpToDate();
+            VoronoiPartitioner.Target target = voronoiPartitioner.getTarget(uav);
 
-            for (int mobileDeviceId = 0; mobileDeviceId < SimManager.getInstance().getNumOfMobileDevice(); mobileDeviceId++) {
-                // ONAT: Devices that haven't entered yet don't get a Voronoi cell claimed
-                // by anyone, so a stationary staged population can't trap a UAV.
-                if (!mobilityModel.isActive(mobileDeviceId, now)) continue;
-
-                Location deviceLoc = mobilityModel.getLocation(mobileDeviceId, now);
-
-                UAV nearestUav = uav;
-                double nearestDistance = SimUtils.getEuclideanDistance(currentLocation, deviceLoc);
-                for (UAV other : allUavs) {
-                    if (other == uav) continue;
-                    double distance = SimUtils.getEuclideanDistance(other.getLocation(), deviceLoc);
-                    if (distance < nearestDistance) {
-                        nearestDistance = distance;
-                        nearestUav = other;
-                    }
-                }
-
-                if (nearestUav == uav) {
-                    double weight = mobilityModel.getPriority(mobileDeviceId, now);
-                    sumX += deviceLoc.getXPos() * weight;
-                    sumY += deviceLoc.getYPos() * weight;
-                    totalWeight += weight;
-                    userCount++;
-                }
-            }
-
-            if (userCount > 0 && totalWeight > 0) {
-                double targetX = sumX / totalWeight;
-                double targetY = sumY / totalWeight;
-
-                double vectorX = targetX - currentLocation.getXPos();
-                double vectorY = targetY - currentLocation.getYPos();
+            if (target != null) {
+                double vectorX = target.x() - currentLocation.getXPos();
+                double vectorY = target.y() - currentLocation.getYPos();
                 double distanceToTarget = Math.sqrt(vectorX * vectorX + vectorY * vectorY);
 
                 double maxSpeed = uav.getMaxMoveDistance();
@@ -179,8 +165,8 @@ public class BasicUAVMobility extends UAVMobilityModel{
                     newX += (int) (vectorX * ratio);
                     newY += (int) (vectorY * ratio);
                 } else {
-                    newX = (int) targetX;
-                    newY = (int) targetY;
+                    newX = (int) target.x();
+                    newY = (int) target.y();
                 }
             } else {
                 // ONAT: Empty Voronoi cell (no user is closest to this UAV) - random walk like LOCAL
@@ -419,7 +405,8 @@ public class BasicUAVMobility extends UAVMobilityModel{
     }
 
     private double calculateNextEventTimeInterval(UAV uav) {
-        return uav.getMobilityInterval() + RNG.nextDouble();
+        // ONAT: Jitter disabled so every UAV decides/moves at the same simulation time.
+        return uav.getMobilityInterval() /* + RNG.nextDouble() */;
     }
 
     private void scheduleNextMoveEvent(UAV edgeHost) {
