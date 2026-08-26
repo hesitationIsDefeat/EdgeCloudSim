@@ -108,6 +108,8 @@ public class SimSettings {
 	private String[] SIMULATION_SCENARIOS;
 	private String[] ORCHESTRATOR_POLICIES;
     private String[] UAV_MOBILITY_OPTIONS;
+	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
+	private double UAV_MOBILITY_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
 	private String currentTaskPartitionPolicy;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
@@ -244,6 +246,7 @@ public class SimSettings {
 			SIMULATION_SCENARIOS = prop.getProperty("simulation_scenarios").split(",");
 
             UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
+			UAV_MOBILITY_INTERVAL = Double.parseDouble(prop.getProperty("uav_mobility_interval", "5.0")); //seconds
 			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
@@ -597,6 +600,14 @@ public class SimSettings {
     public String[] getUAVMobilityOptions()
     {
         return UAV_MOBILITY_OPTIONS;
+    }
+
+    /**
+     * returns how often (seconds) a UAV re-evaluates/moves
+     */
+    public double getUavMobilityInterval()
+    {
+        return UAV_MOBILITY_INTERVAL;
     }
 
     /**

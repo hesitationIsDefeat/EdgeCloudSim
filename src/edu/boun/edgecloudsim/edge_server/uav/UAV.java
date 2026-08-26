@@ -1,5 +1,6 @@
 package edu.boun.edgecloudsim.edge_server.uav;
 
+import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_server.EdgeHost;
 import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.utils.Location;
@@ -34,7 +35,7 @@ public class UAV extends EdgeHost {
      */
     public UAV(int id, RamProvisioner ramProvisioner, BwProvisioner bwProvisioner, long storage, List<? extends Pe> peList, VmScheduler vmScheduler) {
         super(id, ramProvisioner, bwProvisioner, storage, peList, vmScheduler);
-        this.mobilityInterval = 5.0;
+        this.mobilityInterval = SimSettings.getInstance().getUavMobilityInterval();
         this.speed = 15;
         this.maxMoveDistance = this.speed * mobilityInterval;
     }
