@@ -18,9 +18,9 @@ import java.util.Map;
  * positions, not on which UAV is asking.
  * <p>
  * This class computes the partition/centroids for ALL UAVs in a single pass and caches
- * the result. It is refreshed on its own fixed cadence by {@link BasicUAVMobility}
- * (decoupled from any individual UAV's jittered move-event timing), so a UAV's move
- * event just looks up its own already-computed target instead of recomputing anything.
+ * the result, refreshed on demand (see {@link #ensureUpToDate}) by
+ * {@link BasicUAVMobility#processMoveEvent} - a UAV's move event just looks up its own
+ * already-computed target instead of recomputing anything.
  */
 class VoronoiPartitioner {
     /** ONAT: Centroid a UAV should move toward - plain x/y, not a real place/WLAN cell. */
