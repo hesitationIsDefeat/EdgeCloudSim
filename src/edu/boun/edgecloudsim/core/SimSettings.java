@@ -110,6 +110,10 @@ public class SimSettings {
     private String[] UAV_MOBILITY_OPTIONS;
 	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
 	private double UAV_MOBILITY_INTERVAL;
+	// ONAT: How often (seconds) a centralized controller decides new UAV targets - see
+	// mobility/uav/CentralizedUAVMobility. Independent from UAV_MOBILITY_INTERVAL (used by
+	// decentralized policies) so the two cadences can be tuned/compared separately.
+	private double CENTRALIZED_CONTROLLER_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
 	private String currentTaskPartitionPolicy;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
@@ -247,6 +251,9 @@ public class SimSettings {
 
             UAV_MOBILITY_OPTIONS = prop.getProperty("uav_mobility_options").split(",");
 			UAV_MOBILITY_INTERVAL = Double.parseDouble(prop.getProperty("uav_mobility_interval", "5.0")); //seconds
+			// ONAT: falls back to UAV_MOBILITY_INTERVAL if not explicitly set, so tutorials that
+			// don't use a centralized controller are unaffected.
+			CENTRALIZED_CONTROLLER_INTERVAL = Double.parseDouble(prop.getProperty("centralized_controller_interval", String.valueOf(UAV_MOBILITY_INTERVAL))); //seconds
 			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
@@ -608,6 +615,14 @@ public class SimSettings {
     public double getUavMobilityInterval()
     {
         return UAV_MOBILITY_INTERVAL;
+    }
+
+    /**
+     * returns how often (seconds) a centralized controller decides new UAV targets
+     */
+    public double getCentralizedControllerInterval()
+    {
+        return CENTRALIZED_CONTROLLER_INTERVAL;
     }
 
     /**
