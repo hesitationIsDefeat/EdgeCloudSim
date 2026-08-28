@@ -44,6 +44,10 @@ public class UAV extends EdgeHost {
         return this.maxMoveDistance;
     }
 
+    public int getSpeed() {
+        return this.speed;
+    }
+
     public double getMobilityInterval() {
         return this.mobilityInterval;
     }
