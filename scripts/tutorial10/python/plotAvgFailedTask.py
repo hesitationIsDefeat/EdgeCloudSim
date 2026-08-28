@@ -1,0 +1,30 @@
+from plotGenericLine import plot_generic_line
+
+if __name__ == '__main__':
+    print("--- Generating: Average Failed Task Plots ---")
+    
+    # Group 1: Overall Failed Tasks
+    plot_generic_line(row_offset=1, column_offset=2, y_label='Failed Tasks (%)',
+                      app_type='ALL_APPS', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTask')
+    plot_generic_line(row_offset=1, column_offset=2, y_label='Failed Tasks for\nText Message App (%)',
+                      app_type='TEXT_MESSAGE', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTask')
+    plot_generic_line(row_offset=1, column_offset=2, y_label='Failed Tasks for Photo Message App (%)',
+                      app_type='PHOTO_MESSAGE', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTask')
+    plot_generic_line(row_offset=1, column_offset=2, y_label='Failed Tasks for\nDisaster Map Fusion App (%)',
+                      app_type='DISASTER_MAP_FUSION', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTask')
+    plot_generic_line(row_offset=1, column_offset=2, y_label='Failed Tasks for Situation Awareness Alerts App (%)',
+                      app_type='SITUATION_AWARENESS_ALERTS', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTask')
+
+    # # Group 2: Failed Tasks on Edge
+    # plot_generic_line(row_offset=2, column_offset=2, y_label='Failed Tasks on Edge (%)',
+    #                   app_type='ALL_APPS', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTaskOnEdge')
+    # plot_generic_line(row_offset=2, column_offset=2, y_label='Failed Tasks on Edge for\nDisaster Map Fusion App (%)',
+    #                   app_type='DISASTER_MAP_FUSION', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTaskOnEdge')
+    # plot_generic_line(row_offset=2, column_offset=2, y_label='Failed Tasks on Edge for Situation Awareness Alerts App (%)',
+    #                   app_type='SITUATION_AWARENESS_ALERTS', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTaskOnEdge')
+
+    # # Group 3: Failed Tasks on Cloud
+    # plot_generic_line(row_offset=3, column_offset=2, y_label='Failed Tasks on Cloud (%)',
+    #                   app_type='ALL_APPS', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTaskOnCloud')
+    # plot_generic_line(row_offset=3, column_offset=2, y_label='Failed Tasks on Cloud for\nDisaster Map Fusion App (%)',
+    #                   app_type='DISASTER_MAP_FUSION', calculate_percentage='percentage_of_all', legend_pos='upper left', metric_name='FailedTaskOnCloud')

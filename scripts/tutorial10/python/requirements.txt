@@ -1,0 +1,9 @@
+numpy
+pandas
+matplotlib
+scipy
+seaborn
+
+# system dependency (not pip-installable) required by plotUserLocationHeatmapVideo.py
+# for matplotlib.animation.FFMpegWriter: install the "ffmpeg" binary via your OS
+# package manager (e.g. apt install ffmpeg / brew install ffmpeg)
