@@ -53,6 +53,10 @@ def get_configuration():
         # ONAT: device counts to render heat map videos for (plotUserLocationHeatmapVideo.py),
         # used instead of sweeping every step_devices increment since videos are expensive to generate.
         'heatmap_video_devices': [800],
+        # ONAT: NO/RANDOM aren't real placement policies - skip them by default for the
+        # (expensive) heatmap video sweep, but keep them in scenario_types for the other
+        # scalability plots' baselines. Still explicitly renderable via --scenario NO/RANDOM.
+        'heatmap_video_scenarios': [s for s in scenario_types if s not in ('NO', 'RANDOM')],
         # ONAT: must match number_of_sar_members in default_config.properties. SAR members
         # are appended after the swept normal-user devices, ids [num_devices, num_devices+num_sar_members).
         'num_sar_members': 120,
