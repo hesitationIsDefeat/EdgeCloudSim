@@ -24,7 +24,7 @@ import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
  * have no mobility logic of their own - they just carry out whatever alert (target
  * point) the controller most recently sent them; a UAV that receives no alert simply
  * stays where it is (see the NO policy). See {@link #runControlTick} for the supported
- * policies (NO, RANDOM, PRIORITY_KMEANS).
+ * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL).
  * <p>
  * Modeled as a single recurring controller "tick" per {@code uav_mobility_interval}
  * (instead of one self-scheduled move event per UAV like BasicUAVMobility), since one
@@ -43,6 +43,37 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     // threshold (stop once no cluster center moves more than this many meters).
     private static final int KMEANS_MAX_ITERATIONS = 20;
     private static final double KMEANS_CONVERGENCE_EPSILON = 1.0;
+
+    // ONAT: APF tuning. ATTRACTION/REPULSION_GAIN are alpha/beta from the formula.
+    // SOFTENING avoids the inverse-cube singularity when a user or UAV is (near-)
+    // colocated with UAV j (a standard technique, e.g. Plummer softening in
+    // gravitational N-body simulation): distance is measured as sqrt(||.||^2 +
+    // SOFTENING^2) instead of the raw (possibly ~0) Euclidean distance, so force
+    // magnitude stays bounded instead of exploding to +Infinity/NaN.
+    private static final double APF_ATTRACTION_GAIN = 50_000;
+    private static final double APF_REPULSION_GAIN = 20_000;
+    private static final double APF_SOFTENING_SQUARED = 10.0 * 10.0;
+    // ONAT: Net force below this magnitude is treated as a local-minimum "deadlock"
+    // (attraction/repulsion cancel out) rather than a genuine direction to move in -
+    // the controller nudges that UAV randomly instead, one tick-scale advantage a
+    // decentralized/asynchronous APF swarm can't rely on (see class javadoc).
+    private static final double APF_DEADLOCK_FORCE_EPSILON = 1e-6;
+
+    // ONAT: CAPACITY_FILL tuning. Grid discretizes the map into square cells of this size
+    // (meters) for demand profiling. LOAD_FACTOR scales the per-tick per-UAV capacity
+    // (see runCapacityAwareAllocation - capacity is derived from totalDemand/numOfUavs,
+    // NOT a hardcoded absolute number, since a fixed capacity would need re-tuning every
+    // time min/max_number_of_mobile_devices changes; a lone fixed value that happens to
+    // be far smaller than the actual per-hotspot demand at the swept device count is
+    // exactly what let one hotspot silently absorb every UAV). >1 spreads UAVs across
+    // more hotspots (each UAV "counts for" more demand, so fewer are needed per cell);
+    // <1 concentrates more UAVs per hotspot at the expense of covering fewer of them.
+    // DISPERSION_GAIN is deliberately much smaller than APF_REPULSION_GAIN - it only
+    // needs to keep multiple UAVs assigned to the same cell from colliding at the exact
+    // same target point, not to spread them across the map.
+    private static final double CAPACITY_FILL_GRID_CELL_SIZE = 100.0;
+    private static final double CAPACITY_FILL_LOAD_FACTOR = 1.0;
+    private static final double CAPACITY_FILL_DISPERSION_GAIN = 5_000;
 
     private final String centralizedMobilityOption;
     private List<UAV> allUavs = List.of();
@@ -110,6 +141,8 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
                 }
             }
             case "PRIORITY_KMEANS" -> runPriorityWeightedKMeans();
+            case "APF" -> runCentralizedApf();
+            case "CAPACITY_FILL" -> runCapacityAwareAllocation();
             default -> SimLogger.printLine(String.format(
                     "ONAT: Unsupported centralized UAV mobility option: %s", this.centralizedMobilityOption));
         }
@@ -209,6 +242,242 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             }
         }
         return nearest;
+    }
+
+    // ONAT: Centralized Artificial Potential Fields:
+    // F_j = sum_i alpha*w_i*(x_i-U_j)/||x_i-U_j||^3 - sum_{k!=j} beta*(U_k-U_j)/||U_k-U_j||^3
+    // i.e. every active user attracts every UAV with inverse-square strength proportional
+    // to its priority weight, and every other UAV repels it with inverse-square strength -
+    // both terms share the physically-standard inverse-square-law form F = k*r_vector/|r|^3
+    // (Newtonian gravity/Coulomb's law), just with opposite sign/gain. Unlike a real
+    // decentralized APF swarm (each UAV only sensing/reacting locally, potentially on
+    // stale or inconsistent neighbor positions), the controller computes every UAV's net
+    // force from ONE consistent global snapshot, in a single pass (no Lloyd-style
+    // iteration needed, unlike PRIORITY_KMEANS) - eliminating the coordination deadlocks
+    // (e.g. two UAVs "negotiating" via asynchronous updates and oscillating/blocking each
+    // other) that a truly decentralized version would be prone to.
+    private void runCentralizedApf() {
+        int numOfUavs = allUavs.size();
+        if (numOfUavs == 0) return;
+
+        double now = CloudSim.clock();
+        MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
+        int numOfMobileDevice = SimManager.getInstance().getNumOfMobileDevice();
+
+        int activeCount = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (mobilityModel.isActive(deviceId, now)) activeCount++;
+        }
+
+        double[] deviceX = new double[activeCount];
+        double[] deviceY = new double[activeCount];
+        double[] deviceWeight = new double[activeCount];
+        int i = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (!mobilityModel.isActive(deviceId, now)) continue;
+            Location loc = mobilityModel.getLocation(deviceId, now);
+            deviceX[i] = loc.getXPos();
+            deviceY[i] = loc.getYPos();
+            deviceWeight[i] = mobilityModel.getPriority(deviceId, now);
+            i++;
+        }
+
+        double[] uavX = new double[numOfUavs];
+        double[] uavY = new double[numOfUavs];
+        for (int u = 0; u < numOfUavs; u++) {
+            Location loc = allUavs.get(u).getLocation();
+            uavX[u] = loc.getXPos();
+            uavY[u] = loc.getYPos();
+        }
+
+        for (int j = 0; j < numOfUavs; j++) {
+            double forceX = 0;
+            double forceY = 0;
+
+            for (int d = 0; d < activeCount; d++) {
+                double dx = deviceX[d] - uavX[j];
+                double dy = deviceY[d] - uavY[j];
+                double cubedDistance = cubedSoftenedDistance(dx, dy);
+                double scale = APF_ATTRACTION_GAIN * deviceWeight[d] / cubedDistance;
+                forceX += scale * dx;
+                forceY += scale * dy;
+            }
+
+            for (int k = 0; k < numOfUavs; k++) {
+                if (k == j) continue;
+
+                double dx = uavX[k] - uavX[j];
+                double dy = uavY[k] - uavY[j];
+                if (dx == 0 && dy == 0) {
+                    // ONAT: exactly co-located with another UAV (e.g. both converged onto the
+                    // same attraction basin) - the repulsion DIRECTION is undefined at zero
+                    // separation, so scale*dx/scale*dy would silently be zero regardless of how
+                    // large "scale" is, permanently locking the pair together with no restoring
+                    // force. Substitute a random unit direction so the pair still repels - this
+                    // is what actually breaks a UAV pile-up, not just a tuning/gain issue.
+                    double angle = RNG.nextDouble() * 2 * Math.PI;
+                    dx = Math.cos(angle);
+                    dy = Math.sin(angle);
+                }
+                double cubedDistance = cubedSoftenedDistance(dx, dy);
+                double scale = APF_REPULSION_GAIN / cubedDistance;
+                forceX -= scale * dx;
+                forceY -= scale * dy;
+            }
+
+            UAV uav = allUavs.get(j);
+            if (Math.hypot(forceX, forceY) < APF_DEADLOCK_FORCE_EPSILON) {
+                // ONAT: attraction/repulsion (near-)cancel out - random nudge to escape
+                // this local minimum instead of trusting a near-zero, noise-dominated force.
+                int deltaMagnitude = RNG.nextInt((int) maxMoveDistance(uav)) + 1;
+                int deltaSign = RNG.nextBoolean() ? 1 : -1;
+                int delta = deltaMagnitude * deltaSign;
+
+                double targetX = uavX[j] + (RNG.nextBoolean() ? delta : 0);
+                double targetY = uavY[j] + (RNG.nextBoolean() ? 0 : delta);
+                alertUav(uav, targetX, targetY);
+            } else {
+                // ONAT: alertUav caps the actual displacement to maxMoveDistance(uav), so
+                // only the DIRECTION of (forceX, forceY) matters once its magnitude exceeds
+                // that cap - same "move at full speed toward the net force" behavior as the
+                // decentralized LOCAL_FORCE policy in BasicUAVMobility.
+                alertUav(uav, uavX[j] + forceX, uavY[j] + forceY);
+            }
+        }
+    }
+
+    // ONAT: Capacity-Aware Priority Allocation ("Demand-Fill"): unlike APF/PRIORITY_KMEANS
+    // (every UAV chases a force/centroid derived from ALL nearby users, so a single dense
+    // crowd can trap far more UAVs than it actually needs - see the APF bug-fix note above),
+    // this policy explicitly bounds how much demand a single UAV is credited with covering.
+    // The map is discretized into a grid; each cell's demand is the summed priority-weight
+    // of the active users inside it. Cells are filled greedily, most-demanding first, each
+    // pulling in just enough of the nearest still-unassigned UAVs to exhaust its demand
+    // (capped by a per-UAV capacity - see below - per UAV assigned) before moving on to
+    // the next cell - so once a hotspot has "enough" coverage, additional UAVs are freed
+    // to serve the next-highest-demand cell (e.g. a smaller, more distant SAR cluster)
+    // instead of piling up on the biggest crowd. UAVs left unassigned once every cell with
+    // demand has enough coverage (or every UAV is spoken for) get no alert this tick, same
+    // as NO.
+    private void runCapacityAwareAllocation() {
+        int numOfUavs = allUavs.size();
+        if (numOfUavs == 0) return;
+
+        double now = CloudSim.clock();
+        MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
+        int numOfMobileDevice = SimManager.getInstance().getNumOfMobileDevice();
+
+        double westernBound = SimSettings.getInstance().getWesternBound();
+        double southernBound = SimSettings.getInstance().getSouthernBound();
+        int numCols = (int) Math.ceil((SimSettings.getInstance().getEasternBound() - westernBound)
+                / CAPACITY_FILL_GRID_CELL_SIZE);
+        int numRows = (int) Math.ceil((SimSettings.getInstance().getNorthernBound() - southernBound)
+                / CAPACITY_FILL_GRID_CELL_SIZE);
+        double[] cellDemand = new double[numCols * numRows];
+
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (!mobilityModel.isActive(deviceId, now)) continue;
+            Location loc = mobilityModel.getLocation(deviceId, now);
+            int col = clampIndex((int) ((loc.getXPos() - westernBound) / CAPACITY_FILL_GRID_CELL_SIZE), numCols);
+            int row = clampIndex((int) ((loc.getYPos() - southernBound) / CAPACITY_FILL_GRID_CELL_SIZE), numRows);
+            cellDemand[row * numCols + col] += mobilityModel.getPriority(deviceId, now);
+        }
+
+        double totalDemand = Arrays.stream(cellDemand).sum();
+        // ONAT: derived from THIS tick's actual total demand, not a hardcoded constant -
+        // exactly enough combined UAV capacity to cover total demand when LOAD_FACTOR=1,
+        // so a single hotspot can only absorb every UAV if it truly holds ~all the demand.
+        double capacityPerUav = totalDemand / numOfUavs * CAPACITY_FILL_LOAD_FACTOR;
+
+        // ONAT: highest-demand cell first, ties broken by index (irrelevant to correctness).
+        Integer[] cellsByDemand = new Integer[cellDemand.length];
+        for (int c = 0; c < cellsByDemand.length; c++) cellsByDemand[c] = c;
+        Arrays.sort(cellsByDemand, (a, b) -> Double.compare(cellDemand[b], cellDemand[a]));
+
+        double[] uavX = new double[numOfUavs];
+        double[] uavY = new double[numOfUavs];
+        for (int u = 0; u < numOfUavs; u++) {
+            Location loc = allUavs.get(u).getLocation();
+            uavX[u] = loc.getXPos();
+            uavY[u] = loc.getYPos();
+        }
+
+        // ONAT: -1 = not yet assigned to any cell this tick.
+        int[] assignedCell = new int[numOfUavs];
+        Arrays.fill(assignedCell, -1);
+        int unassignedCount = numOfUavs;
+
+        for (int cellIndex : cellsByDemand) {
+            if (unassignedCount == 0) break;
+            double remainingDemand = cellDemand[cellIndex];
+            if (remainingDemand <= 0) break; // ONAT: no demand left at all - nothing further to cover
+
+            double cellCenterX = westernBound + (cellIndex % numCols + 0.5) * CAPACITY_FILL_GRID_CELL_SIZE;
+            double cellCenterY = southernBound + (cellIndex / numCols + 0.5) * CAPACITY_FILL_GRID_CELL_SIZE;
+
+            while (remainingDemand > 0 && unassignedCount > 0) {
+                int nearest = -1;
+                double bestDistanceSquared = Double.MAX_VALUE;
+                for (int u = 0; u < numOfUavs; u++) {
+                    if (assignedCell[u] != -1) continue;
+                    double dx = uavX[u] - cellCenterX;
+                    double dy = uavY[u] - cellCenterY;
+                    double distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared < bestDistanceSquared) {
+                        bestDistanceSquared = distanceSquared;
+                        nearest = u;
+                    }
+                }
+                assignedCell[nearest] = cellIndex;
+                unassignedCount--;
+                remainingDemand -= capacityPerUav;
+            }
+        }
+
+        for (int j = 0; j < numOfUavs; j++) {
+            int cellIndex = assignedCell[j];
+            if (cellIndex == -1) continue; // ONAT: no unmet demand to send this UAV to - stays put
+
+            double targetX = westernBound + (cellIndex % numCols + 0.5) * CAPACITY_FILL_GRID_CELL_SIZE;
+            double targetY = southernBound + (cellIndex / numCols + 0.5) * CAPACITY_FILL_GRID_CELL_SIZE;
+
+            // ONAT: micro-dispersion - nudge apart from other UAVs sharing this same cell so
+            // they hover in a small constellation instead of colliding at the exact center.
+            double dispersionX = 0;
+            double dispersionY = 0;
+            for (int k = 0; k < numOfUavs; k++) {
+                if (k == j || assignedCell[k] != cellIndex) continue;
+
+                double dx = uavX[j] - uavX[k];
+                double dy = uavY[j] - uavY[k];
+                if (dx == 0 && dy == 0) {
+                    // ONAT: exact overlap - direction is undefined, substitute a random one
+                    // (same fix as the APF co-location bug described above).
+                    double angle = RNG.nextDouble() * 2 * Math.PI;
+                    dx = Math.cos(angle);
+                    dy = Math.sin(angle);
+                }
+                double scale = CAPACITY_FILL_DISPERSION_GAIN / cubedSoftenedDistance(dx, dy);
+                dispersionX += scale * dx;
+                dispersionY += scale * dy;
+            }
+
+            alertUav(allUavs.get(j), targetX + dispersionX, targetY + dispersionY);
+        }
+    }
+
+    // ONAT: Clamps a grid coordinate index into [0, count) - a device sitting exactly on
+    // the eastern/northern map bound would otherwise compute an out-of-range index.
+    private static int clampIndex(int index, int count) {
+        return Math.max(0, Math.min(count - 1, index));
+    }
+
+    // ONAT: sqrt(dx^2+dy^2+SOFTENING^2)^3, i.e. the softened ||r||^3 denominator shared by
+    // both APF force terms - never zero, so it never produces NaN/Infinity even when two
+    // points coincide exactly.
+    private static double cubedSoftenedDistance(double dx, double dy) {
+        double softenedDistance = Math.sqrt(dx * dx + dy * dy + APF_SOFTENING_SQUARED);
+        return softenedDistance * softenedDistance * softenedDistance;
     }
 
     // ONAT: Applies the controller's alert - moves the UAV toward (targetX, targetY),
