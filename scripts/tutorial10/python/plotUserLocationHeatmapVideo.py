@@ -156,8 +156,9 @@ if __name__ == '__main__':
     args = _parse_args()
     config = get_configuration()
 
-    # ONAT: render every UAV mobility policy unless the user asked for a specific one.
-    scenarios_to_render = [args.scenario] if args.scenario else config['scenario_types']
+    # ONAT: render every UAV mobility policy unless the user asked for a specific one
+    # (NO/RANDOM are skipped by default - see config.py's heatmap_video_scenarios).
+    scenarios_to_render = [args.scenario] if args.scenario else config['heatmap_video_scenarios']
     # ONAT: default to config.py's heatmap_video_devices list so a single run covers the desired load cases.
     device_counts_to_render = args.num_devices if args.num_devices else config['heatmap_video_devices']
     single_output = len(scenarios_to_render) == 1 and len(device_counts_to_render) == 1
