@@ -10,6 +10,7 @@ import edu.boun.edgecloudsim.utils.SimLogger;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.SimEvent;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -24,7 +25,7 @@ import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
  * have no mobility logic of their own - they just carry out whatever alert (target
  * point) the controller most recently sent them; a UAV that receives no alert simply
  * stays where it is (see the NO policy). See {@link #runControlTick} for the supported
- * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL).
+ * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL, ADAPTIVE_KMEANS).
  * <p>
  * Modeled as a single recurring controller "tick" per {@code uav_mobility_interval}
  * (instead of one self-scheduled move event per UAV like BasicUAVMobility), since one
@@ -75,8 +76,44 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     private static final double CAPACITY_FILL_LOAD_FACTOR = 1.0;
     private static final double CAPACITY_FILL_DISPERSION_GAIN = 5_000;
 
+    // ONAT: ADAPTIVE_KMEANS tuning (see runAdaptiveKMeans). "Gathered" is detected by
+    // watching the scatter-phase K-Means centers across ticks instead of coupling to any
+    // tutorial-specific mobility model internals (e.g. ConvergingMobilityModel's hardcoded
+    // meeting-area coordinates) - this keeps the policy usable with any MobilityModel.
+    // EPSILON is deliberately loose (well above a single captured device's own bounded
+    // random-walk step) so a sparse cluster's residual jitter never blocks detection
+    // forever. STABLE_DURATION is a real SIMULATED-TIME window (seconds), not a tick
+    // count: a tick-count streak is unreliable since the controller's own tick cadence
+    // (centralized_controller_interval) is decoupled from however often the underlying
+    // MobilityModel actually emits a new position (e.g. ConvergingMobilityModel only
+    // updates every TRAVEL_TIME=3s) - several consecutive controller ticks can trivially
+    // see byte-identical positions (0 movement) purely because no new mobility update has
+    // landed yet, which would false-trigger "gathered" seconds into the run, long before
+    // users actually converge. Requiring a long, UNINTERRUPTED real-time window instead
+    // means any genuine in-progress movement (which recurs every real mobility update)
+    // resets the streak, no matter how the tick/update cadences happen to align.
+    private static final double ADAPTIVE_GATHER_EPSILON = 20.0;
+    private static final double ADAPTIVE_GATHER_STABLE_DURATION = 30.0;
+    // ONAT: K=numOfUavs K-Means naturally produces several near-duplicate centers per
+    // physical meeting area once users stop moving (there are usually far fewer distinct
+    // real gathering spots than UAVs) - centers within this distance of each other are
+    // merged into one saved "middle point".
+    private static final double ADAPTIVE_MIDDLE_POINT_MERGE_DISTANCE = 250.0;
+
     private final String centralizedMobilityOption;
     private List<UAV> allUavs = List.of();
+
+    // ONAT: ADAPTIVE_KMEANS phase-tracking state - see runAdaptiveKMeans. All null/false
+    // until this policy's first control tick; a fresh CentralizedUAVMobility instance is
+    // constructed per simulation run (SampleScenarioFactory.getEdgeMobilityModel()), so
+    // there's no cross-run leakage to worry about.
+    private double[] adaptivePrevCenterX;
+    private double[] adaptivePrevCenterY;
+    private double adaptiveStableSinceTime = -1; // -1 = not currently in an uninterrupted stable streak
+    private List<double[]> adaptiveMiddlePoints; // null until the "gathered" breakpoint fires
+    private boolean[] adaptiveActiveAtGather; // isActive(...) snapshot taken at gather time
+    private boolean[] adaptiveParked; // per-UAV: true once parked at a middle point (never moves again)
+    private boolean adaptiveSarArrived = false;
 
     public CentralizedUAVMobility(String centralizedMobilityOption) {
         super();
@@ -143,6 +180,7 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             case "PRIORITY_KMEANS" -> runPriorityWeightedKMeans();
             case "APF" -> runCentralizedApf();
             case "CAPACITY_FILL" -> runCapacityAwareAllocation();
+            case "ADAPTIVE_KMEANS" -> runAdaptiveKMeans();
             default -> SimLogger.printLine(String.format(
                     "ONAT: Unsupported centralized UAV mobility option: %s", this.centralizedMobilityOption));
         }
@@ -193,37 +231,47 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             centerY[u] = loc.getYPos();
         }
 
-        double[] sumX = new double[numOfUavs];
-        double[] sumY = new double[numOfUavs];
-        double[] sumWeight = new double[numOfUavs];
+        runLloydKMeans(deviceX, deviceY, deviceWeight, centerX, centerY);
+
+        for (int u = 0; u < numOfUavs; u++) {
+            alertUav(allUavs.get(u), centerX[u], centerY[u]);
+        }
+    }
+
+    // ONAT: Shared Lloyd's-algorithm iteration loop (PRIORITY_KMEANS and ADAPTIVE_KMEANS
+    // both use this) - mutates centerX/centerY (already seeded by the caller) in place.
+    // Passing a uniform weight array (all 1.0) reduces this to plain, unweighted K-Means,
+    // which is exactly what ADAPTIVE_KMEANS needs (its spec: SAR priority isn't considered).
+    private static void runLloydKMeans(double[] pointX, double[] pointY, double[] pointWeight,
+                                        double[] centerX, double[] centerY) {
+        int numOfCenters = centerX.length;
+        double[] sumX = new double[numOfCenters];
+        double[] sumY = new double[numOfCenters];
+        double[] sumWeight = new double[numOfCenters];
         for (int iteration = 0; iteration < KMEANS_MAX_ITERATIONS; iteration++) {
             Arrays.fill(sumX, 0);
             Arrays.fill(sumY, 0);
             Arrays.fill(sumWeight, 0);
 
-            for (int d = 0; d < activeCount; d++) {
-                int nearest = nearestCenter(centerX, centerY, deviceX[d], deviceY[d]);
-                sumX[nearest] += deviceX[d] * deviceWeight[d];
-                sumY[nearest] += deviceY[d] * deviceWeight[d];
-                sumWeight[nearest] += deviceWeight[d];
+            for (int p = 0; p < pointX.length; p++) {
+                int nearest = nearestCenter(centerX, centerY, pointX[p], pointY[p]);
+                sumX[nearest] += pointX[p] * pointWeight[p];
+                sumY[nearest] += pointY[p] * pointWeight[p];
+                sumWeight[nearest] += pointWeight[p];
             }
 
             double maxShift = 0;
-            for (int u = 0; u < numOfUavs; u++) {
-                if (sumWeight[u] <= 0) continue; // ONAT: empty cluster - keep its previous center
+            for (int c = 0; c < numOfCenters; c++) {
+                if (sumWeight[c] <= 0) continue; // ONAT: empty cluster - keep its previous center
 
-                double newX = sumX[u] / sumWeight[u];
-                double newY = sumY[u] / sumWeight[u];
-                maxShift = Math.max(maxShift, Math.hypot(newX - centerX[u], newY - centerY[u]));
-                centerX[u] = newX;
-                centerY[u] = newY;
+                double newX = sumX[c] / sumWeight[c];
+                double newY = sumY[c] / sumWeight[c];
+                maxShift = Math.max(maxShift, Math.hypot(newX - centerX[c], newY - centerY[c]));
+                centerX[c] = newX;
+                centerY[c] = newY;
             }
 
             if (maxShift < KMEANS_CONVERGENCE_EPSILON) break; // ONAT: converged early
-        }
-
-        for (int u = 0; u < numOfUavs; u++) {
-            alertUav(allUavs.get(u), centerX[u], centerY[u]);
         }
     }
 
@@ -463,6 +511,225 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             }
 
             alertUav(allUavs.get(j), targetX + dispersionX, targetY + dispersionY);
+        }
+    }
+
+    // ONAT: Adaptive K-Means: a state machine that switches strategy across the
+    // scenario's two lifecycle breakpoints (users converging onto their meeting areas,
+    // then SAR members entering) instead of running one fixed formula all simulation
+    // long like PRIORITY_KMEANS/APF/CAPACITY_FILL. Per the spec, SAR priority weighting
+    // is intentionally NOT used anywhere in this policy (every K-Means pass below uses a
+    // uniform weight of 1.0) - unlike PRIORITY_KMEANS/APF/CAPACITY_FILL which all lean on
+    // MobilityModel.getPriority.
+    // Phase SCATTERED (adaptiveMiddlePoints == null): behaves exactly like PRIORITY_KMEANS
+    // (K = numOfUavs, unweighted) - see runAdaptiveScatterPhase.
+    // Phase GATHERED (middle points saved, SAR not yet seen): the meeting-area centroids
+    // are frozen and saved; UAVs simply hold their already-converged positions (no new
+    // alert) until SAR arrives - re-running K-Means would be pointless since the now
+    // near-stationary crowd wouldn't move the centroids anyway.
+    // Phase SAR_ARRIVED: one UAV per saved middle point is parked there permanently (the
+    // UAV nearest to that point - see parkUavsAtMiddlePoints), and every remaining UAV is
+    // continuously re-clustered (K = numOfUavs - numOfMiddlePoints, unweighted) onto
+    // whichever devices only became active after the gather breakpoint - see
+    // runAdaptiveSarPhase.
+    private void runAdaptiveKMeans() {
+        int numOfUavs = allUavs.size();
+        if (numOfUavs == 0) return;
+
+        double now = CloudSim.clock();
+        MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
+        int numOfMobileDevice = SimManager.getInstance().getNumOfMobileDevice();
+
+        if (adaptiveMiddlePoints == null) {
+            runAdaptiveScatterPhase(numOfUavs, mobilityModel, numOfMobileDevice, now);
+            return;
+        }
+
+        if (!adaptiveSarArrived) {
+            // ONAT: "SAR users enter the scene" breakpoint, detected generically as "some
+            // device that was inactive at gather-time just became active" - no hardcoded
+            // SAR device-id range/knowledge needed here.
+            for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+                if (mobilityModel.isActive(deviceId, now) && !adaptiveActiveAtGather[deviceId]) {
+                    adaptiveSarArrived = true;
+                    parkUavsAtMiddlePoints(numOfUavs);
+                    break;
+                }
+            }
+            if (!adaptiveSarArrived) return; // ONAT: gathered, SAR not here yet - hold position
+        }
+
+        runAdaptiveSarPhase(numOfUavs, mobilityModel, numOfMobileDevice, now);
+    }
+
+    // ONAT: Unweighted K-Means (K = numOfUavs) over every active device, identical to
+    // PRIORITY_KMEANS but with priority ignored (weight forced to 1.0) - before SAR arrive
+    // every active device is a normal user anyway, so this only ever clusters the crowd.
+    // Also tracks whether the resulting centers have stopped moving across ticks; once
+    // stable for ADAPTIVE_GATHER_STABLE_DURATION simulated seconds, saves deduplicated
+    // "middle points" and a snapshot of which devices were active at that moment (see
+    // class javadoc).
+    private void runAdaptiveScatterPhase(int numOfUavs, MobilityModel mobilityModel,
+                                          int numOfMobileDevice, double now) {
+        int activeCount = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (mobilityModel.isActive(deviceId, now)) activeCount++;
+        }
+        if (activeCount == 0) return; // ONAT: nothing to cluster around - every UAV stays put this tick
+
+        double[] deviceX = new double[activeCount];
+        double[] deviceY = new double[activeCount];
+        double[] deviceWeight = new double[activeCount]; // ONAT: uniform - SAR priority ignored
+        int i = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (!mobilityModel.isActive(deviceId, now)) continue;
+            Location loc = mobilityModel.getLocation(deviceId, now);
+            deviceX[i] = loc.getXPos();
+            deviceY[i] = loc.getYPos();
+            deviceWeight[i] = 1.0;
+            i++;
+        }
+
+        double[] centerX = new double[numOfUavs];
+        double[] centerY = new double[numOfUavs];
+        for (int u = 0; u < numOfUavs; u++) {
+            Location loc = allUavs.get(u).getLocation();
+            centerX[u] = loc.getXPos();
+            centerY[u] = loc.getYPos();
+        }
+
+        runLloydKMeans(deviceX, deviceY, deviceWeight, centerX, centerY);
+
+        if (adaptivePrevCenterX != null) {
+            double maxShiftSincePrevTick = 0;
+            for (int u = 0; u < numOfUavs; u++) {
+                maxShiftSincePrevTick = Math.max(maxShiftSincePrevTick, Math.hypot(
+                        centerX[u] - adaptivePrevCenterX[u], centerY[u] - adaptivePrevCenterY[u]));
+            }
+            if (maxShiftSincePrevTick >= ADAPTIVE_GATHER_EPSILON) {
+                adaptiveStableSinceTime = -1; // ONAT: real movement - streak broken
+            } else if (adaptiveStableSinceTime < 0) {
+                adaptiveStableSinceTime = now; // ONAT: first quiet tick of a new streak
+            }
+        }
+        adaptivePrevCenterX = centerX.clone();
+        adaptivePrevCenterY = centerY.clone();
+
+        if (adaptiveStableSinceTime >= 0 && now - adaptiveStableSinceTime >= ADAPTIVE_GATHER_STABLE_DURATION) {
+            adaptiveMiddlePoints = mergeNearbyPoints(centerX, centerY);
+            adaptiveActiveAtGather = new boolean[numOfMobileDevice];
+            for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+                adaptiveActiveAtGather[deviceId] = mobilityModel.isActive(deviceId, now);
+            }
+        }
+
+        for (int u = 0; u < numOfUavs; u++) {
+            alertUav(allUavs.get(u), centerX[u], centerY[u]);
+        }
+    }
+
+    // ONAT: Greedily merges cluster centers within ADAPTIVE_MIDDLE_POINT_MERGE_DISTANCE of
+    // each other into a single averaged point - collapses K=numOfUavs near-duplicate
+    // centers down to the true (usually much smaller) number of distinct physical
+    // gathering spots.
+    private static List<double[]> mergeNearbyPoints(double[] pointX, double[] pointY) {
+        int n = pointX.length;
+        boolean[] merged = new boolean[n];
+        List<double[]> result = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (merged[i]) continue;
+            double sumX = pointX[i];
+            double sumY = pointY[i];
+            int count = 1;
+            merged[i] = true;
+            for (int j = i + 1; j < n; j++) {
+                if (merged[j]) continue;
+                if (Math.hypot(pointX[j] - pointX[i], pointY[j] - pointY[i]) <= ADAPTIVE_MIDDLE_POINT_MERGE_DISTANCE) {
+                    sumX += pointX[j];
+                    sumY += pointY[j];
+                    count++;
+                    merged[j] = true;
+                }
+            }
+            result.add(new double[]{sumX / count, sumY / count});
+        }
+        return result;
+    }
+
+    // ONAT: One-time (per simulation run) assignment: the UAV nearest each saved middle
+    // point is sent there and flagged in adaptiveParked so future ticks never alert it
+    // again ("will not move", per spec). Always leaves numOfUavs - adaptiveMiddlePoints.size()
+    // UAVs free, since middle points are a merge of exactly numOfUavs seed clusters.
+    private void parkUavsAtMiddlePoints(int numOfUavs) {
+        adaptiveParked = new boolean[numOfUavs];
+        boolean[] uavTaken = new boolean[numOfUavs];
+        for (double[] middlePoint : adaptiveMiddlePoints) {
+            int nearest = -1;
+            double bestDistanceSquared = Double.MAX_VALUE;
+            for (int u = 0; u < numOfUavs; u++) {
+                if (uavTaken[u]) continue;
+                Location loc = allUavs.get(u).getLocation();
+                double dx = loc.getXPos() - middlePoint[0];
+                double dy = loc.getYPos() - middlePoint[1];
+                double distanceSquared = dx * dx + dy * dy;
+                if (distanceSquared < bestDistanceSquared) {
+                    bestDistanceSquared = distanceSquared;
+                    nearest = u;
+                }
+            }
+            if (nearest == -1) break; // ONAT: more middle points than UAVs - shouldn't happen, guard anyway
+
+            uavTaken[nearest] = true;
+            adaptiveParked[nearest] = true;
+            alertUav(allUavs.get(nearest), middlePoint[0], middlePoint[1]);
+        }
+    }
+
+    // ONAT: Every tick from SAR-arrival onward - unweighted K-Means (K = number of
+    // non-parked UAVs) over exactly the devices that only became active after the gather
+    // breakpoint (this policy's generic stand-in for "SAR users", see class javadoc).
+    // Re-seeded from each free UAV's CURRENT position every tick (like PRIORITY_KMEANS),
+    // since unlike the crowd, SAR members keep moving for the rest of the simulation.
+    private void runAdaptiveSarPhase(int numOfUavs, MobilityModel mobilityModel,
+                                      int numOfMobileDevice, double now) {
+        List<Integer> freeUavIndices = new ArrayList<>();
+        for (int u = 0; u < numOfUavs; u++) {
+            if (!adaptiveParked[u]) freeUavIndices.add(u);
+        }
+        if (freeUavIndices.isEmpty()) return;
+
+        int newArrivalCount = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (mobilityModel.isActive(deviceId, now) && !adaptiveActiveAtGather[deviceId]) newArrivalCount++;
+        }
+        if (newArrivalCount == 0) return;
+
+        double[] deviceX = new double[newArrivalCount];
+        double[] deviceY = new double[newArrivalCount];
+        double[] deviceWeight = new double[newArrivalCount]; // ONAT: uniform - SAR priority ignored
+        int i = 0;
+        for (int deviceId = 0; deviceId < numOfMobileDevice; deviceId++) {
+            if (!mobilityModel.isActive(deviceId, now) || adaptiveActiveAtGather[deviceId]) continue;
+            Location loc = mobilityModel.getLocation(deviceId, now);
+            deviceX[i] = loc.getXPos();
+            deviceY[i] = loc.getYPos();
+            deviceWeight[i] = 1.0;
+            i++;
+        }
+
+        int numOfFreeUavs = freeUavIndices.size();
+        double[] centerX = new double[numOfFreeUavs];
+        double[] centerY = new double[numOfFreeUavs];
+        for (int c = 0; c < numOfFreeUavs; c++) {
+            Location loc = allUavs.get(freeUavIndices.get(c)).getLocation();
+            centerX[c] = loc.getXPos();
+            centerY[c] = loc.getYPos();
+        }
+
+        runLloydKMeans(deviceX, deviceY, deviceWeight, centerX, centerY);
+
+        for (int c = 0; c < numOfFreeUavs; c++) {
+            alertUav(allUavs.get(freeUavIndices.get(c)), centerX[c], centerY[c]);
         }
     }
 
