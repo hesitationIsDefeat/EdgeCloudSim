@@ -550,8 +550,14 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		getCloudletList().add(task);
 		bindCloudletToVm(task.getCloudletId(),selectedVM.getId());
 		
-		//SimLogger.printLine(CloudSim.clock() + ": Cloudlet#" + task.getCloudletId() + " is submitted to VM#" + task.getVmId());
-		schedule(getVmsToDatacentersMap().get(task.getVmId()), delay, CloudSimTags.CLOUDLET_SUBMIT, task);
+		// ONAT: Schedule directly to the already-known datacenterId instead of
+		// getVmsToDatacentersMap().get(task.getVmId()) - that map is only populated once
+		// the broker processes this VM's VM_CREATE_ACK event, which (due to CloudSim's
+		// minimum inter-event delay) can still be pending the first time a task is
+		// submitted to a freshly created VM, causing a null lookup/NPE here. datacenterId
+		// was already derived directly from the host a few lines above, so it's correct
+		// regardless of whether the broker's bookkeeping has caught up yet.
+		schedule(datacenterId, delay, CloudSimTags.CLOUDLET_SUBMIT, task);
 
 		if (!task.isPartitionChild()) {
 			SimLogger.getInstance().taskAssigned(task.getCloudletId(),
