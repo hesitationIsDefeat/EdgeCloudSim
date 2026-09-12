@@ -13,6 +13,8 @@ import org.cloudbus.cloudsim.core.SimEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
 
@@ -26,6 +28,13 @@ import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
  * point) the controller most recently sent them; a UAV that receives no alert simply
  * stays where it is (see the NO policy). See {@link #runControlTick} for the supported
  * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL, ADAPTIVE_KMEANS).
+ * <p>
+ * Like {@link BasicUAVMobility}'s {@code VORONOI_<factor>}, {@code PRIORITY_KMEANS}
+ * supports an optional {@code PRIORITY_KMEANS_<factor>} naming convention (see
+ * {@link #isPriorityKMeansPolicy} / {@link #parseExplicitPriorityFactor}) so a single
+ * sweep can compare several SAR priority factors under this policy too - the factor
+ * only affects which {@code sar_priority_factor} a scenario factory feeds into the
+ * {@link MobilityModel}, not the clustering algorithm itself.
  * <p>
  * Modeled as a single recurring controller "tick" per {@code uav_mobility_interval}
  * (instead of one self-scheduled move event per UAV like BasicUAVMobility), since one
@@ -44,6 +53,34 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     // threshold (stop once no cluster center moves more than this many meters).
     private static final int KMEANS_MAX_ITERATIONS = 20;
     private static final double KMEANS_CONVERGENCE_EPSILON = 1.0;
+
+    // ONAT: PRIORITY_KMEANS policy variants are named "PRIORITY_KMEANS" (uses the
+    // configured sar_priority_factor) or "PRIORITY_KMEANS_<factor>" (e.g.
+    // "PRIORITY_KMEANS_2" explicitly overrides the SAR priority factor to 2.0,
+    // regardless of sar_priority_factor) - same naming convention as BasicUAVMobility's
+    // VORONOI_<factor>, so a single MainApp sweep can compare multiple priority factors
+    // under this policy too, just by listing more names in uav_mobility_options.
+    private static final Pattern PRIORITY_KMEANS_VARIANT_PATTERN =
+            Pattern.compile("PRIORITY_KMEANS(?:_(\\d+(?:\\.\\d+)?))?");
+
+    /** ONAT: true for "PRIORITY_KMEANS" or any "PRIORITY_KMEANS_<factor>" variant. */
+    public static boolean isPriorityKMeansPolicy(String policyName) {
+        return policyName != null && PRIORITY_KMEANS_VARIANT_PATTERN.matcher(policyName).matches();
+    }
+
+    /**
+     * ONAT: Explicit SAR priority factor encoded in a "PRIORITY_KMEANS_<factor>" policy
+     * name, or null for bare "PRIORITY_KMEANS" (caller should fall back to the configured
+     * sar_priority_factor in that case).
+     */
+    public static Double parseExplicitPriorityFactor(String policyName) {
+        Matcher matcher = PRIORITY_KMEANS_VARIANT_PATTERN.matcher(policyName);
+        if (!matcher.matches())
+            throw new IllegalArgumentException("Not a PRIORITY_KMEANS policy variant: " + policyName);
+
+        String factor = matcher.group(1);
+        return factor == null ? null : Double.parseDouble(factor);
+    }
 
     // ONAT: APF tuning. ATTRACTION/REPULSION_GAIN are alpha/beta from the formula.
     // SOFTENING avoids the inverse-cube singularity when a user or UAV is (near-)
@@ -156,6 +193,15 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     // communication-latency model yet to justify that extra event overhead - a future
     // policy that needs per-UAV alert delay can schedule those explicitly.
     private void runControlTick() {
+        // ONAT: PRIORITY_KMEANS_<factor> variants share the exact same clustering
+        // algorithm as bare PRIORITY_KMEANS - only SampleScenarioFactory.getMobilityModel()
+        // differs (it picks which sar_priority_factor to feed into the MobilityModel), so
+        // every variant name is dispatched here before falling through to the switch below.
+        if (isPriorityKMeansPolicy(this.centralizedMobilityOption)) {
+            runPriorityWeightedKMeans();
+            return;
+        }
+
         switch (this.centralizedMobilityOption) {
             case "NO" -> {
                 // ONAT: The controller sends no alerts this tick - every UAV stays put.
@@ -177,7 +223,6 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
                     alertUav(uav, targetX, targetY);
                 }
             }
-            case "PRIORITY_KMEANS" -> runPriorityWeightedKMeans();
             case "APF" -> runCentralizedApf();
             case "CAPACITY_FILL" -> runCapacityAwareAllocation();
             case "ADAPTIVE_KMEANS" -> runAdaptiveKMeans();
