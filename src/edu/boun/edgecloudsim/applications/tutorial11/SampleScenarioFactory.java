@@ -102,10 +102,27 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	public MobilityModel getMobilityModel() {
 		SimSettings SS = SimSettings.getInstance();
 
+		// ONAT: "VORONOI_<factor>"/"PRIORITY_KMEANS_<factor>" (e.g. "VORONOI_2",
+		// "PRIORITY_KMEANS_2") explicitly override the SAR priority weight for that run,
+		// regardless of sar_priority_factor - lets a single sweep compare priority factors
+		// under either policy family. Bare "VORONOI"/"PRIORITY_KMEANS" keep using the
+		// configured sar_priority_factor. To add another factor, just append a new
+		// "<POLICY>_<factor>" entry to uav_mobility_options - no Java changes needed.
+		double sarPriorityFactor = SS.getSarPriorityFactor();
+		if (BasicUAVMobility.isVoronoiPolicy(uavMobilityOption)) {
+			Double explicitFactor = BasicUAVMobility.parseExplicitPriorityFactor(uavMobilityOption);
+			if (explicitFactor != null)
+				sarPriorityFactor = explicitFactor;
+		} else if (CentralizedUAVMobility.isPriorityKMeansPolicy(uavMobilityOption)) {
+			Double explicitFactor = CentralizedUAVMobility.parseExplicitPriorityFactor(uavMobilityOption);
+			if (explicitFactor != null)
+				sarPriorityFactor = explicitFactor;
+		}
+
 		return new CombinedMobilityModel(numOfNormalUsers, numOfSarMembers, simulationTime,
 				SS.getMeetingPointAssignmentPolicy(), SS.getSarTeamSize(), SS.getSarEntryTime(),
 				SS.getSarMoveDuration(), SS.getSarStopDuration(), SS.getSarMoveSpeed(),
-				SS.getSarPriorityFactor());
+				sarPriorityFactor);
 	}
 
 	/**
