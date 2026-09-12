@@ -1,0 +1,179 @@
+/*
+ * Title:        EdgeCloudSim - Scenario Factory
+ * 
+ * Description:  Sample scenario factory providing the default
+ *               instances of required abstract classes
+ * 
+ * Licence:      GPL - http://www.gnu.org/copyleft/gpl.html
+ * Copyright (c) 2017, Bogazici University, Istanbul, Turkey
+ */
+
+package edu.boun.edgecloudsim.applications.tutorial12;
+
+import edu.boun.edgecloudsim.cloud_server.CloudServerManager;
+import edu.boun.edgecloudsim.cloud_server.DefaultCloudServerManager;
+import edu.boun.edgecloudsim.core.ScenarioFactory;
+import edu.boun.edgecloudsim.core.SimSettings;
+import edu.boun.edgecloudsim.edge_client.DefaultMobileDeviceManager;
+import edu.boun.edgecloudsim.edge_client.MobileDeviceManager;
+import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.DefaultMobileServerManager;
+import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.MobileServerManager;
+import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
+import edu.boun.edgecloudsim.edge_orchestrator.uav.UAVEdgeOrchestrator;
+import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
+import edu.boun.edgecloudsim.mobility.MobilityModel;
+import edu.boun.edgecloudsim.mobility.uav.CentralizedUAVMobility;
+import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
+import edu.boun.edgecloudsim.network.NetworkModel;
+import edu.boun.edgecloudsim.network.uav.UAVNetworkModel;
+import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
+
+/**
+ * Scenario factory for tutorial12, combining the normal-user population from
+ * tutorial6 with a separate SAR (Search &amp; Rescue) team population that enters
+ * the scenario later and has its own applications and movement policy (identical
+ * to tutorial8/9/10's wiring for everything except UAV mobility). Unlike tutorial10
+ * (which sweeps several different centralized policies), this tutorial's
+ * {@code uav_mobility_options} (see default_config.properties) sweeps ONLY
+ * {@code PRIORITY_KMEANS} policy variants ({@code PRIORITY_KMEANS_<factor>}, e.g.
+ * {@code PRIORITY_KMEANS_8}) to compare different SAR priority factors under one
+ * batch run - the centralized analogue of tutorial9's VORONOI-variant sweep.
+ * See {@link CombinedMobilityModel} and {@link SARAwareLoadGenerator}.
+ */
+public class SampleScenarioFactory implements ScenarioFactory {
+	private final int numOfNormalUsers;
+	private final int numOfSarMembers;
+	private final double simulationTime;
+	private final String orchestratorPolicy;
+	private final String simScenario;
+    private final String uavMobilityOption;
+	
+	/**
+	 * Constructor for sample scenario factory.
+	 * 
+	 * @param _numOfNormalUsers Number of normal-user mobile devices (swept population)
+	 * @param _numOfSarMembers Number of SAR team members (fixed, entering later)
+	 * @param _simulationTime Total simulation time in seconds
+	 * @param _orchestratorPolicy Orchestrator policy for task offloading decisions
+	 * @param _simScenario Simulation scenario type (e.g., SINGLE_TIER, TWO_TIER)
+	 */
+	SampleScenarioFactory(int _numOfNormalUsers,
+                          int _numOfSarMembers,
+                          double _simulationTime,
+                          String _orchestratorPolicy,
+                          String _simScenario,
+                          String uavMobilityOption){
+		orchestratorPolicy = _orchestratorPolicy;
+		numOfNormalUsers = _numOfNormalUsers;
+		numOfSarMembers = _numOfSarMembers;
+		simulationTime = _simulationTime;
+		simScenario = _simScenario;
+        this.uavMobilityOption = uavMobilityOption;
+	}
+	
+	/**
+	 * Creates load generator model for task generation patterns.
+	 * @return SARAwareLoadGenerator, keeping normal users and SAR members on
+	 * their own reserved application subsets and entry times
+	 */
+	@Override
+	public LoadGeneratorModel getLoadGeneratorModel() {
+		return new SARAwareLoadGenerator(numOfNormalUsers, numOfSarMembers, simulationTime, simScenario,
+				SimSettings.getInstance().getSarEntryTime());
+	}
+
+	/**
+	 * Creates edge orchestrator for task offloading decisions.
+	 * @return BasicEdgeOrchestrator with configured policy and scenario
+	 */
+	@Override
+	public EdgeOrchestrator getEdgeOrchestrator() {
+		return new UAVEdgeOrchestrator();
+	}
+
+	/**
+	 * Creates mobility model for device movement patterns.
+	 * @return CombinedMobilityModel: normal users converge onto 3 hardcoded meeting
+	 * areas (same as tutorial6), while SAR members move in fixed teams that enter
+	 * later and alternate between random-walk and stationary phases.
+	 */
+	@Override
+	public MobilityModel getMobilityModel() {
+		SimSettings SS = SimSettings.getInstance();
+
+		// ONAT: "PRIORITY_KMEANS_<factor>" (e.g. "PRIORITY_KMEANS_2") explicitly overrides
+		// the SAR priority weight for that run, regardless of sar_priority_factor - same
+		// convention as BasicUAVMobility's VORONOI_<factor>. Bare "PRIORITY_KMEANS" keeps
+		// using the configured sar_priority_factor. To add another factor, just append a
+		// new "PRIORITY_KMEANS_<factor>" entry to uav_mobility_options - no Java changes needed.
+		double sarPriorityFactor = SS.getSarPriorityFactor();
+		if (CentralizedUAVMobility.isPriorityKMeansPolicy(uavMobilityOption)) {
+			Double explicitFactor = CentralizedUAVMobility.parseExplicitPriorityFactor(uavMobilityOption);
+			if (explicitFactor != null)
+				sarPriorityFactor = explicitFactor;
+		}
+
+		return new CombinedMobilityModel(numOfNormalUsers, numOfSarMembers, simulationTime,
+				SS.getMeetingPointAssignmentPolicy(), SS.getSarTeamSize(), SS.getSarEntryTime(),
+				SS.getSarMoveDuration(), SS.getSarStopDuration(), SS.getSarMoveSpeed(),
+				sarPriorityFactor);
+	}
+
+	/**
+	 * Creates network model for communication delay simulation.
+	 * @return MM1Queue model for queueing theory-based network delays
+	 */
+	@Override
+	public NetworkModel getNetworkModel() {
+		return new UAVNetworkModel(numOfNormalUsers + numOfSarMembers, simScenario);
+	}
+
+	/**
+	 * Creates edge server manager for managing edge computing resources.
+	 * @return DefaultEdgeServerManager for standard edge server operations
+	 */
+	@Override
+	public EdgeServerManager getEdgeServerManager() {
+		return new SampleEdgeServerManager();
+	}
+
+    /**
+     * Creates the UAV mobility model: a single {@link CentralizedUAVMobility}
+     * controller (instead of tutorial8/9's per-UAV {@code BasicUAVMobility}) that has
+     * full visibility of every mobile device - including SAR members, once they have
+     * entered the scenario, since both populations share a single device-id space via
+     * {@link CombinedMobilityModel} - and decides every UAV's next move centrally.
+     */
+    @Override
+    public UAVMobilityModel getEdgeMobilityModel() {
+        return new CentralizedUAVMobility(uavMobilityOption);
+    }
+
+    /**
+	 * Creates cloud server manager for managing cloud computing resources.
+	 * @return DefaultCloudServerManager for standard cloud server operations
+	 */
+	@Override
+	public CloudServerManager getCloudServerManager() {
+		return new DefaultCloudServerManager();
+	}
+	
+	/**
+	 * Creates mobile device manager for handling mobile device operations.
+	 * @return DefaultMobileDeviceManager for standard mobile device management
+	 * @throws Exception if mobile device manager creation fails
+	 */
+	@Override
+	public MobileDeviceManager getMobileDeviceManager() throws Exception {
+		return new DefaultMobileDeviceManager();
+	}
+
+	/**
+	 * Creates mobile server manager for mobile device processing units.
+	 * @return DefaultMobileServerManager for standard mobile device operations
+	 */
+	@Override
+	public MobileServerManager getMobileServerManager() {
+		return new DefaultMobileServerManager();
+	}
+}
