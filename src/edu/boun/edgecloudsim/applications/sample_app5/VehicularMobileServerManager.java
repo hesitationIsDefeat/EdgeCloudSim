@@ -15,7 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.cloudbus.cloudsim.CloudletSchedulerTimeShared;
+import org.cloudbus.cloudsim.CloudletSchedulerSpaceShared;
 import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
@@ -98,7 +98,7 @@ public class VehicularMobileServerManager extends MobileServerManager{
 			long bandwidth = 0;  // Local processing doesn't require network bandwidth
 
 			// Create and add mobile VM with time-shared scheduling
-			MobileVM vm = new MobileVM(vmCounter, brockerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerTimeShared());
+			MobileVM vm = new MobileVM(vmCounter, brockerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared());
 			vmList.get(i).add(vm);
 			vmCounter++;
 		}
