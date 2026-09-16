@@ -143,7 +143,7 @@ def _parse_args():
                          help='UAV mobility policy to visualize. If omitted, a video is generated for every policy.')
     parser.add_argument('--num-devices', type=int, nargs='+', default=None,
                          help='Number(s) of mobile devices of the simulation to visualize. '
-                              'If omitted, videos are generated for both the minimum and maximum device counts.')
+                              "If omitted, videos are generated for config.py's heatmap_video_devices list.")
     parser.add_argument('--iteration', type=int, default=1, help='Simulation iteration (ite<N>) to visualize.')
     parser.add_argument('--grid-size', type=int, default=40, help='Number of heat map bins per axis.')
     parser.add_argument('--fps', type=int, default=5, help='Frames per second of the generated video.')
@@ -156,10 +156,11 @@ if __name__ == '__main__':
     args = _parse_args()
     config = get_configuration()
 
-    # ONAT: render every UAV mobility policy unless the user asked for a specific one.
-    scenarios_to_render = [args.scenario] if args.scenario else config['scenario_types']
-    # ONAT: default to both device count extremes so a single run covers the light and heavy load cases.
-    device_counts_to_render = args.num_devices if args.num_devices else [config['min_devices'], config['max_devices']]
+    # ONAT: render every UAV mobility policy unless the user asked for a specific one
+    # (NO/RANDOM are skipped by default - see config.py's heatmap_video_scenarios).
+    scenarios_to_render = [args.scenario] if args.scenario else config['heatmap_video_scenarios']
+    # ONAT: default to config.py's heatmap_video_devices list so a single run covers the desired load cases.
+    device_counts_to_render = args.num_devices if args.num_devices else config['heatmap_video_devices']
     single_output = len(scenarios_to_render) == 1 and len(device_counts_to_render) == 1
     for scenario in scenarios_to_render:
         for num_devices in device_counts_to_render:
