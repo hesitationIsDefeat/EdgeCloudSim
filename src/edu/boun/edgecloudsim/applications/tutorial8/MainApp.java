@@ -157,9 +157,9 @@ public class MainApp {
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);
 
-                            // ONAT: SAR team members are a separate, fixed-size population that
-                            // enters the scenario on top of the swept normal-user device count (j).
-                            int numOfSarMembers = SS.getNumOfSarMembers();
+                            // ONAT: SAR team members are a separate population, sized as a percentage
+                            // of the current swept normal-user device count (j), not a fixed number.
+                            int numOfSarMembers = SS.computeNumOfSarMembers(j);
                             int totalNumOfMobileDevices = j + numOfSarMembers;
 
                             // Log scenario header summarizing experimental factors
