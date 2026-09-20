@@ -4,6 +4,9 @@
 
 TUTORIALS=(8 9 10 11 12)
 
+# Non-interactive backend so plt.show() doesn't pop up a window and block each script.
+export MPLBACKEND=Agg
+
 script_root_path="$(dirname "$(readlink -f "$0")")"
 venv_activate="${script_root_path}/tutorial6/python/.venv/bin/activate"
 
