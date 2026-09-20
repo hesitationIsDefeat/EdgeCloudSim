@@ -8,7 +8,7 @@ matplotlib.use('Agg')  # video is rendered to a file, no display is needed
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from config import get_configuration
+from config import get_configuration, compute_num_sar_members
 
 # Simulation area boundaries in meters.
 # These must match northern_bound / southern_bound / eastern_bound / western_bound
@@ -40,12 +40,14 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     config = get_configuration()
     folder_path = config['folder_path']
     output_folder_path = config['output_folder_path']
-    num_sar_members = config['num_sar_members']
 
     if scenario is None:
         scenario = config['scenario_types'][0]
     if num_devices is None:
-        num_devices = config['heatmap_video_devices'][0]
+        num_devices = config['max_devices']
+    # ONAT: SAR member count is a percentage of num_devices, not a fixed number - see
+    # SimSettings.computeNumOfSarMembers() (Java) / compute_num_sar_members() (this file's mirror).
+    num_sar_members = compute_num_sar_members(num_devices)
 
     file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
     file_path = os.path.join(folder_path, f'ite{iteration}', file_name)

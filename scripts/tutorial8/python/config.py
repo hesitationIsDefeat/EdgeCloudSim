@@ -35,6 +35,30 @@ def _parse_uav_mobility_options(properties_path):
     raise ValueError(f"uav_mobility_options not found in {properties_path}")
 
 
+def _parse_property(properties_path, key):
+    """Reads a single `key=value` line from default_config.properties, or None if absent."""
+    with open(properties_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(f'{key}='):
+                return line.split('=', 1)[1].strip()
+    return None
+
+
+def compute_num_sar_members(num_normal_users):
+    """
+    Mirrors SimSettings.computeNumOfSarMembers() (Java): SAR member count is a
+    percentage (sar_member_percentage) of the normal-user count, rounded to the
+    nearest whole number of sar_team_size teams - not a fixed number.
+    """
+    percentage = float(_parse_property(_PROPERTIES_PATH, 'sar_member_percentage') or 0)
+    team_size = int(_parse_property(_PROPERTIES_PATH, 'sar_team_size') or 5)
+    if team_size <= 0:
+        return 0
+    num_teams = round(round(num_normal_users * percentage) / team_size)
+    return num_teams * team_size
+
+
 def _load_tutorial_display_name(tutorial_key):
     """Reads config/tutorial_names.properties; falls back to the key itself if missing."""
     try:
@@ -80,9 +104,6 @@ def get_configuration():
         # (expensive) heatmap video sweep, but keep them in scenario_types for the other
         # scalability plots' baselines. Still explicitly renderable via --scenario NO/RANDOM.
         'heatmap_video_scenarios': [s for s in scenario_types if s not in ('NO', 'RANDOM')],
-        # ONAT: must match number_of_sar_members in default_config.properties. SAR members
-        # are appended after the swept normal-user devices, ids [num_devices, num_devices+num_sar_members).
-        'num_sar_members': 120,
         'use_scientific_notation_x_axis': False, # For future use
         'save_figure_as_pdf': True,
         'plot_confidence_interval': True,
