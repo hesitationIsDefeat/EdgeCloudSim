@@ -6,6 +6,8 @@ import re
 # "PRIORITY_KMEANS_<factor>" there is enough; no python changes needed.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
+_ROOT_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
+_TUTORIAL_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'tutorial_names.properties')
 
 # Cycled by index so any number of scenarios gets a distinct color/marker automatically.
 _COLOR_PALETTE = [
@@ -39,6 +41,22 @@ def _make_legend(scenario_type):
     return f'{scenario_type} (1x)'
 
 
+def _load_tutorial_display_name(tutorial_key):
+    """Reads config/tutorial_names.properties; falls back to the key itself if missing."""
+    try:
+        with open(_TUTORIAL_NAMES_PATH, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                key, _, value = line.partition('=')
+                if key.strip() == tutorial_key:
+                    return value.strip()
+    except FileNotFoundError:
+        pass
+    return tutorial_key
+
+
 def get_configuration():
     """
     Returns a dictionary containing all simulation and plotting parameters.
@@ -50,6 +68,7 @@ def get_configuration():
 
     config = {
         'folder_path': '../../../sim_results/tutorial12',
+        'output_folder_path': os.path.join('../../../sim_results/tutorial12', _load_tutorial_display_name('tutorial12')),
         'num_iterations': 10,
         'x_tick_interval': 1,
         'scenario_types': scenario_types,

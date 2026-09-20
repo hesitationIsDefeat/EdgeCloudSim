@@ -14,6 +14,7 @@ def plot_location_heatmap():
 
     # Configuration parameters
     folder_path = config['folder_path']
+    output_folder_path = config['output_folder_path']
     num_simulations = config['num_iterations']
     start_devices = config['min_devices']
     step_devices = config['step_devices']
@@ -109,7 +110,8 @@ def plot_location_heatmap():
 
     # --- Save Figure ---
     if config['save_figure_as_pdf']:
-        output_path = os.path.join(folder_path, "position.pdf")
+        output_path = os.path.join(output_folder_path, "position.pdf")
+        os.makedirs(output_folder_path, exist_ok=True)
         fig.savefig(output_path, bbox_inches='tight')
         print(f"Figure saved to {output_path}")
 

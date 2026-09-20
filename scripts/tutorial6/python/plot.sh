@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Non-interactive backend so plt.show() doesn't pop up a window and block each script.
+export MPLBACKEND=Agg
+
 # Array of python scripts to execute
 scripts=(
     "plotAvgFailedTask.py"

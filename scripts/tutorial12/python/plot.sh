@@ -1,11 +1,17 @@
 #!/bin/bash
 
+# Non-interactive backend so plt.show() doesn't pop up a window and block each script.
+export MPLBACKEND=Agg
+
 # ONAT: archive the config used for this run into the results folder, so reviewing
 # results later doesn't require cross-referencing scripts/tutorial12/config (which may
 # have changed since, e.g. for a later sweep). Kept as .xml/.properties (not renamed to
 # .txt) since that's the simpler default - rename below if a viewer/tool needs .txt.
 config_dir="../config"
-results_dir="../../../sim_results/tutorial12"
+tutorial_names_file="../../../config/tutorial_names.properties"
+tutorial_name=$(grep "^tutorial12=" "$tutorial_names_file" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+: "${tutorial_name:=tutorial12}"
+results_dir="../../../sim_results/tutorial12/${tutorial_name}"
 mkdir -p "$results_dir"
 cp "$config_dir/default_config.properties" "$results_dir/"
 cp "$config_dir/edge_devices.xml" "$results_dir/"
@@ -14,9 +20,9 @@ cp "$config_dir/applications.xml" "$results_dir/"
 # Array of python scripts to execute
 scripts=(
     "plotAvgFailedTask.py"
-    #"plotAvgNetworkDelay.py"
-    #"plotAvgProcessingTime.py"
-    #"plotAvgServiceTime.py"
+    "plotAvgNetworkDelay.py"
+    "plotAvgProcessingTime.py"
+    "plotAvgServiceTime.py"
     "plotAvgVmUtilization.py"
     "plotUserLocationHeatmapVideo.py"
     #"plotDelayReasonAsBar.py"

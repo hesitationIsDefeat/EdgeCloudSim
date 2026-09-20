@@ -39,6 +39,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     """
     config = get_configuration()
     folder_path = config['folder_path']
+    output_folder_path = config['output_folder_path']
     num_sar_members = config['num_sar_members']
 
     if scenario is None:
@@ -127,8 +128,8 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     ani = animation.FuncAnimation(fig, update, frames=len(time_steps), blit=False)
 
     if output_path is None:
-        os.makedirs(folder_path, exist_ok=True)
-        output_path = os.path.join(folder_path, f'user_location_heatmap_{scenario}_{num_devices}DEVICES.mp4')
+        os.makedirs(output_folder_path, exist_ok=True)
+        output_path = os.path.join(output_folder_path, f'user_location_heatmap_{scenario}_{num_devices}DEVICES.mp4')
 
     ani.save(output_path, writer=animation.FFMpegWriter(fps=fps))
     print(f"Video saved to {output_path}")

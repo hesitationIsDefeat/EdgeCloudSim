@@ -22,6 +22,7 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
     
     # Extract configuration parameters
     folder_path = config['folder_path']
+    output_folder_path = config['output_folder_path']
     num_simulations = config['num_iterations']
     scenarios = config['scenario_types']
     start_devices = config['min_devices']
@@ -119,8 +120,8 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
         # provide a descriptive metric name.
         safe_metric_name = (metric_name or f"{row_offset}_{column_offset}").replace(' ', '_')
         filename = f"{safe_metric_name}_{safe_app_type}.pdf"
-        output_path = os.path.join(folder_path, filename)
-        os.makedirs(folder_path, exist_ok=True)
+        output_path = os.path.join(output_folder_path, filename)
+        os.makedirs(output_folder_path, exist_ok=True)
         fig.savefig(output_path, bbox_inches='tight')
         print(f"Figure saved to {output_path}")
 
