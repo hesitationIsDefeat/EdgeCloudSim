@@ -1,5 +1,6 @@
 package edu.boun.edgecloudsim.network.uav;
 
+import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_client.Task;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
@@ -7,6 +8,7 @@ import edu.boun.edgecloudsim.network.NetworkModel;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.Host;
+import org.cloudbus.cloudsim.core.CloudSim;
 
 public class UAVNetworkModel extends NetworkModel {
     private double poissonMean;
@@ -14,6 +16,9 @@ public class UAVNetworkModel extends NetworkModel {
     private double avgTaskOutputSize;
 
     private static final int MAX_WLAN_BANDWIDTH = SimSettings.getInstance().getWlanBandwidth();
+
+    /** Devices within this range of a UAV are treated as contending for its bandwidth */
+    private static final double CO_LOCATION_RANGE = 50.0; // m
     /**
      * Constructs a new NetworkModel instance with the specified parameters.
      *
@@ -83,13 +88,26 @@ public class UAVNetworkModel extends NetworkModel {
         }
     }
 
+    /**
+     * Counts mobile devices currently within CO_LOCATION_RANGE of the given UAV location.
+     * Replaces the flat numberOfMobileDevices/numDatacenter average with an actual
+     * proximity-based count, since devices no longer snap to discrete grid cells.
+     */
+    private int getDeviceCount(Location uavLocation, double time) {
+        int deviceCount = 0;
+        for (int i = 0; i < numberOfMobileDevices; i++) {
+            Location location = SimManager.getInstance().getMobilityModel().getLocation(i, time);
+            if (SimUtils.getEuclideanDistance(location, uavLocation) <= CO_LOCATION_RANGE)
+                deviceCount++;
+        }
+        return deviceCount;
+    }
+
     @Override
     public double getUploadDelay(int sourceDeviceId, int destDeviceId, Task task) {
-        double result = 0;
-        int numDatacenter = SimSettings.getInstance().getNumOfEdgeDatacenters();
-
         double currentDistance;
         int currentBandwidth = MAX_WLAN_BANDWIDTH;
+        int deviceCount = numberOfMobileDevices / SimSettings.getInstance().getNumOfEdgeDatacenters();
 
         Host destHost = SimUtils.getHostFromId(destDeviceId);
 
@@ -100,12 +118,13 @@ public class UAVNetworkModel extends NetworkModel {
             currentDistance = SimUtils.getEuclideanDistance(deviceLoc, uavLoc);
 
             currentBandwidth = getBandwidthAtDistance(currentDistance);
+            deviceCount = getDeviceCount(uavLoc, CloudSim.clock());
         }
         return calculateMM1(0,
                 currentBandwidth,
                 poissonMean,
                 avgTaskOutputSize,
-                numberOfMobileDevices / numDatacenter);
+                deviceCount);
     }
 
     @Override
