@@ -24,7 +24,7 @@ scripts=(
     "plotAvgProcessingTime.py"
     "plotAvgServiceTime.py"
     "plotAvgVmUtilization.py"
-    "plotUserLocationHeatmapVideo.py"
+    #"plotUserLocationHeatmapVideo.py"
     #"plotDelayReasonAsBar.py"
     #"plotGenericLine.py"
     #"plotLocation.py"

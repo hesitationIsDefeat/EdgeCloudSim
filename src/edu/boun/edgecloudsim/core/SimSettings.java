@@ -120,7 +120,9 @@ public class SimSettings {
 
 	// ONAT: SAR (Search & Rescue) team parameters (tutorial8). Defaulted to 0/empty
 	// so scenarios that don't define these properties are unaffected.
-	private int NUM_OF_SAR_MEMBERS;
+	// ONAT: number of SAR members is not a fixed count - it's a percentage of the
+	// current (swept) normal-user device count, see computeNumOfSarMembers().
+	private double SAR_MEMBER_PERCENTAGE;
 	private int SAR_TEAM_SIZE;
 	private double SAR_ENTRY_TIME;
 	private double SAR_MOVE_DURATION;
@@ -259,9 +261,11 @@ public class SimSettings {
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
 
-			// ONAT: SAR (Search & Rescue) team parameters - only used by tutorial8
-			NUM_OF_SAR_MEMBERS = Integer.parseInt(prop.getProperty("number_of_sar_members", "0"));
-			SAR_TEAM_SIZE = Integer.parseInt(prop.getProperty("sar_team_size", "4"));
+			// ONAT: SAR (Search & Rescue) team parameters - only used by tutorial8+.
+			// The member count is not read directly - it's derived from the swept
+			// normal-user count via computeNumOfSarMembers(), see sar_member_percentage.
+			SAR_MEMBER_PERCENTAGE = Double.parseDouble(prop.getProperty("sar_member_percentage", "0"));
+			SAR_TEAM_SIZE = Integer.parseInt(prop.getProperty("sar_team_size", "5"));
 			SAR_ENTRY_TIME = (double)60 * Double.parseDouble(prop.getProperty("sar_entry_time", "0")); //minutes -> seconds
 			SAR_MOVE_DURATION = Double.parseDouble(prop.getProperty("sar_move_duration", "60")); //seconds
 			SAR_STOP_DURATION = Double.parseDouble(prop.getProperty("sar_stop_duration", "90")); //seconds
@@ -634,10 +638,25 @@ public class SimSettings {
         return MEETING_POINT_ASSIGNMENT_POLICY;
     }
 
-    /** ONAT: number of SAR team members (tutorial8 only, in addition to the swept normal-user population) */
-    public int getNumOfSarMembers()
+    /**
+     * ONAT: computes the number of SAR team members for a given normal-user device
+     * count (tutorial8+ only, in addition to the swept normal-user population).
+     * The result is rounded to the nearest whole number of sar_team_size teams so
+     * SAR members always form complete teams.
+     */
+    public int computeNumOfSarMembers(int numOfNormalUsers)
     {
-        return NUM_OF_SAR_MEMBERS;
+        if (SAR_TEAM_SIZE <= 0)
+            return 0;
+        int rawCount = (int) Math.round(numOfNormalUsers * SAR_MEMBER_PERCENTAGE);
+        int numOfTeams = (int) Math.round((double) rawCount / SAR_TEAM_SIZE);
+        return numOfTeams * SAR_TEAM_SIZE;
+    }
+
+    /** ONAT: configured SAR-member percentage (fraction of the normal-user count, e.g. 0.10 = 10%) */
+    public double getSarMemberPercentage()
+    {
+        return SAR_MEMBER_PERCENTAGE;
     }
 
     /** ONAT: number of SAR members that move together as a fixed team */
