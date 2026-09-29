@@ -11,7 +11,9 @@ config_dir="../config"
 tutorial_names_file="../../../config/tutorial_names.properties"
 tutorial_name=$(grep "^tutorial10=" "$tutorial_names_file" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
 : "${tutorial_name:=tutorial10}"
-results_dir="../../../sim_results/tutorial10/${tutorial_name}"
+# PLOT_RUN_DIR (set by plot_all.sh) redirects output into a shared timestamped folder.
+output_root="${PLOT_RUN_DIR:-../../../sim_results/tutorial10}"
+results_dir="${output_root}/${tutorial_name}"
 mkdir -p "$results_dir"
 cp "$config_dir/default_config.properties" "$results_dir/"
 cp "$config_dir/edge_devices.xml" "$results_dir/"
