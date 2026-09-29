@@ -42,6 +42,18 @@ def _parse_property(properties_path, key):
     return None
 
 
+def _get_orchestrator_policy(properties_path):
+    """
+    Reads orchestrator_policies from default_config.properties and returns the first
+    entry - this must match the orchestratorPolicy segment MainApp.java embeds in every
+    SIMRESULT_* log file name, so plotting scripts never hardcode a stale policy name.
+    """
+    value = _parse_property(properties_path, 'orchestrator_policies')
+    if not value:
+        raise ValueError(f"orchestrator_policies not found in {properties_path}")
+    return value.split(',')[0].strip()
+
+
 def compute_num_sar_members(num_normal_users):
     """
     Mirrors SimSettings.computeNumOfSarMembers() (Java): SAR member count is a
@@ -92,7 +104,10 @@ def get_configuration():
 
     config = {
         'folder_path': '../../../sim_results/tutorial12',
-        'output_folder_path': os.path.join('../../../sim_results/tutorial12', _load_tutorial_display_name('tutorial12')),
+        'orchestrator_policy': _get_orchestrator_policy(_PROPERTIES_PATH),
+        'output_folder_path': os.path.join(
+            os.environ.get('PLOT_RUN_DIR', '../../../sim_results/tutorial12'),
+            _load_tutorial_display_name('tutorial12')),
         'num_iterations': 10,
         'x_tick_interval': 1,
         'scenario_types': scenario_types,

@@ -1,3 +1,32 @@
+import os
+
+
+_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
+_PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
+
+
+def _parse_property(properties_path, key):
+    """Reads a single `key=value` line from default_config.properties, or None if absent."""
+    with open(properties_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(f'{key}='):
+                return line.split('=', 1)[1].strip()
+    return None
+
+
+def _get_orchestrator_policy(properties_path):
+    """
+    Reads orchestrator_policies from default_config.properties and returns the first
+    entry - this must match the orchestratorPolicy segment MainApp.java embeds in every
+    SIMRESULT_* log file name, so plotting scripts never hardcode a stale policy name.
+    """
+    value = _parse_property(properties_path, 'orchestrator_policies')
+    if not value:
+        raise ValueError(f"orchestrator_policies not found in {properties_path}")
+    return value.split(',')[0].strip()
+
+
 def get_configuration():
     """
     Returns a dictionary containing all simulation and plotting parameters.
@@ -5,6 +34,7 @@ def get_configuration():
     """
     config = {
         'folder_path': '../../../sim_results/tutorial6',
+        'orchestrator_policy': _get_orchestrator_policy(_PROPERTIES_PATH),
         'num_iterations': 10,
         'x_tick_interval': 1,
         'scenario_types': ['NO', 'RANDOM', 'LOCAL', 'ASSIGNED_LOCAL'],
