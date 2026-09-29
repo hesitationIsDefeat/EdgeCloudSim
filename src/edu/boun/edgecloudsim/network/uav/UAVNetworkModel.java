@@ -7,6 +7,7 @@ import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.network.NetworkModel;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimUtils;
+import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.core.CloudSim;
 
@@ -89,6 +90,31 @@ public class UAVNetworkModel extends NetworkModel {
     }
 
     /**
+     * Finds the UAV physically closest to the given location, regardless of
+     * SERVICE_RADIUS or current load. Used as a stand-in for "the UAV this device's
+     * radio would associate with" when the orchestrator hasn't chosen a target VM yet
+     * (see getUploadDelay) - association is driven by proximity, not by the
+     * orchestrator's load-balancing decision, so this is independent of (and doesn't
+     * duplicate) EdgeOrchestrator VM-selection policies.
+     */
+    private UAV findNearestUAV(Location location) {
+        UAV nearest = null;
+        double minDistance = Double.MAX_VALUE;
+        for (Datacenter dc : SimManager.getInstance().getEdgeServerManager().getDatacenterList()) {
+            for (Host h : dc.getHostList()) {
+                if (h instanceof UAV uav) {
+                    double distance = SimUtils.getEuclideanDistance(location, uav.getLocation());
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        nearest = uav;
+                    }
+                }
+            }
+        }
+        return nearest;
+    }
+
+    /**
      * Counts mobile devices currently within CO_LOCATION_RANGE of the given UAV location.
      * Replaces the flat numberOfMobileDevices/numDatacenter average with an actual
      * proximity-based count, since devices no longer snap to discrete grid cells.
@@ -110,8 +136,21 @@ public class UAVNetworkModel extends NetworkModel {
         int deviceCount = numberOfMobileDevices / SimSettings.getInstance().getNumOfEdgeDatacenters();
 
         Host destHost = SimUtils.getHostFromId(destDeviceId);
+        UAV uav = null;
+        if (destHost instanceof UAV) {
+            // Caller already knows the bound host (e.g. download delay, or a
+            // partitioned task's pre-selected sibling VM) - use it directly.
+            uav = (UAV) destHost;
+        } else if (destDeviceId == SimSettings.GENERIC_EDGE_DEVICE_ID) {
+            // Upload delay for a not-yet-partitioned task is computed before the
+            // orchestrator binds a VM, so destDeviceId is just the generic-edge
+            // sentinel here, not a real host ID. Approximate with the nearest UAV,
+            // since WLAN association is driven by radio proximity, not by the
+            // orchestrator's (possibly load-based) VM placement decision.
+            uav = findNearestUAV(task.getSubmittedLocation());
+        }
 
-        if (destHost instanceof UAV uav) {
+        if (uav != null) {
             Location deviceLoc = task.getSubmittedLocation();
             Location uavLoc = uav.getLocation();
 
@@ -129,7 +168,11 @@ public class UAVNetworkModel extends NetworkModel {
 
     @Override
     public double getDownloadDelay(int sourceDeviceId, int destDeviceId, Task task) {
-        return getUploadDelay(sourceDeviceId, destDeviceId, task);
+        // getUploadDelay resolves its target host from its *second* parameter;
+        // sourceDeviceId here is the already-bound host ID and destDeviceId is the
+        // mobile device ID, i.e. reversed from getUploadDelay's own parameter order -
+        // swap them so the host ID (not the device ID) is what gets looked up.
+        return getUploadDelay(destDeviceId, sourceDeviceId, task);
     }
 
     @Override
