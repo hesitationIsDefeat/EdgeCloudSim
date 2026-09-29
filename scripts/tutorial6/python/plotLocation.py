@@ -18,6 +18,7 @@ def plot_location_heatmap():
     start_devices = config['min_devices']
     step_devices = config['step_devices']
     end_devices = config['max_devices']
+    orchestrator_policy = config['orchestrator_policy']
     
     device_counts = np.arange(start_devices, end_devices + 1, step_devices)
     num_device_steps = len(device_counts)
@@ -30,7 +31,7 @@ def plot_location_heatmap():
     for s in range(1, num_simulations + 1):
         for i, num_devices in enumerate(device_counts):
             try:
-                file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{num_devices}DEVICES_LOCATION.log'
+                file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{num_devices}DEVICES_LOCATION.log'
                 file_path = os.path.join(folder_path, f'ite{s}', file_name)
 
                 # Read data, skipping header (row 1) and time column (col 1)

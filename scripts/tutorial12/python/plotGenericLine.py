@@ -28,6 +28,7 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
     start_devices = config['min_devices']
     step_devices = config['step_devices']
     end_devices = config['max_devices']
+    orchestrator_policy = config['orchestrator_policy']
     
     device_counts = np.arange(start_devices, end_devices + 1, step_devices)
     num_device_steps = len(device_counts)
@@ -40,7 +41,7 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
         for i, scenario in enumerate(scenarios):
             for j, num_devices in enumerate(device_counts):
                 try:
-                    file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{scenario}_{num_devices}DEVICES_{app_type}_GENERIC.log'
+                    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_{app_type}_GENERIC.log'
                     file_path = os.path.join(folder_path, f'ite{s}', file_name)
                     
                     # Read the specific value from the log file

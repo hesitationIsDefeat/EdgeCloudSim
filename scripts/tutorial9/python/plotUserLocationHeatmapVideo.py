@@ -40,6 +40,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     config = get_configuration()
     folder_path = config['folder_path']
     output_folder_path = config['output_folder_path']
+    orchestrator_policy = config['orchestrator_policy']
 
     if scenario is None:
         scenario = config['scenario_types'][0]
@@ -49,7 +50,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     # SimSettings.computeNumOfSarMembers() (Java) / compute_num_sar_members() (this file's mirror).
     num_sar_members = compute_num_sar_members(num_devices)
 
-    file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
+    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
     file_path = os.path.join(folder_path, f'ite{iteration}', file_name)
 
     print(f"Reading user location log -> {file_path}")
@@ -69,7 +70,7 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     normal_data = data[data['device_id'] < num_devices]
     sar_data = data[data['device_id'] >= num_devices]
 
-    uav_file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{scenario}_{num_devices}DEVICES_UAV_LOCATIONS.log'
+    uav_file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_UAV_LOCATIONS.log'
     uav_file_path = os.path.join(folder_path, f'ite{iteration}', uav_file_name)
     try:
         uav_data = _read_location_log(uav_file_path, id_column='uav_id')

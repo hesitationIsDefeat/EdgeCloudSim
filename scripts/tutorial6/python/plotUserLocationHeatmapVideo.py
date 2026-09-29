@@ -34,13 +34,14 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     """
     config = get_configuration()
     folder_path = config['folder_path']
+    orchestrator_policy = config['orchestrator_policy']
 
     if scenario is None:
         scenario = config['scenario_types'][0]
     if num_devices is None:
         num_devices = config['max_devices']
 
-    file_name = f'SIMRESULT_DEFAULT_SCENARIO_WORST_FIT_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
+    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
     file_path = os.path.join(folder_path, f'ite{iteration}', file_name)
 
     print(f"Reading user location log -> {file_path}")
