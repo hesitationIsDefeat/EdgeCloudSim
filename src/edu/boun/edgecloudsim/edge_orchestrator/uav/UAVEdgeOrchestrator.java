@@ -5,6 +5,7 @@ import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_client.CpuUtilizationModel_Custom;
 import edu.boun.edgecloudsim.edge_client.Task;
 import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
+import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.utils.Location;
 import org.cloudbus.cloudsim.Vm;
@@ -46,13 +47,18 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
             double distance = SimUtils.getEuclideanDistance(senderLocation, uav.getLocation());
             if (distance > UAV.SERVICE_RADIUS) continue;
 
+            // ONAT: Skip UAVs whose VM allocation failed at startup (see UAV.getVm())
+            // instead of crashing with a NullPointerException below.
+            EdgeVM uavVm = uav.getVm();
+            if (uavVm == null) continue;
+
             // ONAT: TODO: Check for energy
 
 
             // ONAT: Include load already reserved for sibling sub-tasks in this batch
             double uavLoad = uav.getCurrentLoad() + reservedLoad.getOrDefault(uav, 0.0);
             // ONAT: Check if the requested load fits into the UAV
-            double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uav.getVm().getVmType());
+            double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uavVm.getVmType());
             if (uavLoad + taskLoad > 100.0) continue;
 
             // ONAT: Check for the least loaded UAV
