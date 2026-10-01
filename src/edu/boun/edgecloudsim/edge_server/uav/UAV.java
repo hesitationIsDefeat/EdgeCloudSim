@@ -82,6 +82,10 @@ public class UAV extends EdgeHost {
     }
 
     public double getCurrentLoad() {
-        return this.getVm().getTotalUtilizationOfCpu(CloudSim.clock());
+        // getVm() returns null if VM allocation failed for this UAV - treat as idle
+        // rather than crashing; callers that place tasks should still skip this UAV
+        // entirely (see UAVEdgeOrchestrator.getUAVToOffloadTo).
+        EdgeVM vm = this.getVm();
+        return vm == null ? 0.0 : vm.getTotalUtilizationOfCpu(CloudSim.clock());
     }
 }
