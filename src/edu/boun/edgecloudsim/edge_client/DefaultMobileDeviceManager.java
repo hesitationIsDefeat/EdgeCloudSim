@@ -466,9 +466,6 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		long remainder = parts == 0 ? 0 : total % parts;
 		for (int i = 0; i < parts; i++) {
 			values[i] = base + (i < remainder ? 1 : 0);
-			if (total > 0 && values[i] == 0) {
-				values[i] = 1;
-			}
 		}
 		return values;
 	}
