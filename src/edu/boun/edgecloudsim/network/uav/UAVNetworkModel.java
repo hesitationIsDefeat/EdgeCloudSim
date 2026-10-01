@@ -71,22 +71,29 @@ public class UAVNetworkModel extends NetworkModel {
     }
 
     private int getBandwidthAtDistance(double distance) {
-        if (distance <= 25) {
-            // ONAT: Near-field
-            return MAX_WLAN_BANDWIDTH;
-        } else if (distance <= 75.0) {
-            // ONAT: Mid-range
-            return (int) (0.8 * MAX_WLAN_BANDWIDTH);
-        } else if (distance <= 125.0) {
-            // ONAT: Far-range
-            return (int) (0.5 * MAX_WLAN_BANDWIDTH);
-        } else if (distance <= UAV.SERVICE_RADIUS) {
-            // ONAT: Edge of coverage
-            return (int) (0.2 * MAX_WLAN_BANDWIDTH);
-        } else {
-            // ONAT: Out of range
-            return 0;
+        if (distance > UAV.SERVICE_RADIUS) {
+            return 0; // Out of range cutoff
         }
+        
+        double referenceDistance = 25.0; // Near-field boundary
+        if (distance <= referenceDistance) {
+            return MAX_WLAN_BANDWIDTH;
+        }
+
+        // 1. Calculate SNR based on 1/d^2 (Free Space Path Loss)
+        // Assume a strong baseline linear SNR of 1000 (~30 dB) at 25 meters
+        double baseSnr = 1000.0; 
+        double currentSnr = baseSnr * Math.pow(referenceDistance / distance, 2);
+        
+        // 2. Calculate Bandwidth capacity using Shannon-Hartley: C = B * log2(1 + SNR)
+        // We use Math.log() divided by Math.log(2) to get base-2 logarithm
+        double maxCapacity = Math.log(1 + baseSnr) / Math.log(2);
+        double currentCapacity = Math.log(1 + currentSnr) / Math.log(2);
+        
+        // 3. Find the ratio and apply it to the max bandwidth
+        double capacityRatio = currentCapacity / maxCapacity;
+        
+        return (int) (MAX_WLAN_BANDWIDTH * capacityRatio);
     }
 
     /**
