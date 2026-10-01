@@ -51,7 +51,10 @@ public class CpuUtilizationModel_Custom implements UtilizationModel {
 		else if(task.getAssociatedDatacenterId() == SimSettings.MOBILE_DATACENTER_ID)
 			index = 11;  // Mobile VM utilization index
 
-		return SimSettings.getInstance().getTaskLookUpTable()[task.getTaskType()][index];
+		// applications.xml's value is for one whole (unpartitioned) task; a partition
+		// child only does 1/childCount of the work, so its utilization share is scaled
+		// down accordingly (childCount is 1 for any non-partitioned task).
+		return SimSettings.getInstance().getTaskLookUpTable()[task.getTaskType()][index] / task.getChildCount();
 	}
 	
 	/**
@@ -82,6 +85,7 @@ public class CpuUtilizationModel_Custom implements UtilizationModel {
 			SimLogger.printLine("Unknown VM Type! Terminating simulation...");
 			System.exit(1);
 		}
-		return SimSettings.getInstance().getTaskLookUpTable()[task.getTaskType()][index];
+		// See getUtilization() above - scale down by childCount for partition children.
+		return SimSettings.getInstance().getTaskLookUpTable()[task.getTaskType()][index] / task.getChildCount();
 	}
 }
