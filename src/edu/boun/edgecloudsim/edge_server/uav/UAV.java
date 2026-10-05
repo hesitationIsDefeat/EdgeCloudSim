@@ -53,11 +53,7 @@ public class UAV extends EdgeHost {
     }
 
     public boolean isUserInRange(Location userLocation) {
-        Location uavLocation = this.getLocation();
-        return uavLocation.getXPos() + UAV.SERVICE_RADIUS > userLocation.getXPos()
-                && uavLocation.getXPos() - UAV.SERVICE_RADIUS < userLocation.getXPos()
-                && uavLocation.getYPos() + UAV.SERVICE_RADIUS > userLocation.getYPos()
-                && uavLocation.getYPos() - UAV.SERVICE_RADIUS < userLocation.getYPos();
+        return SimUtils.getEuclideanDistance(this.getLocation(), userLocation) <= SERVICE_RADIUS;
     }
 
     public EdgeVM getVm() {
