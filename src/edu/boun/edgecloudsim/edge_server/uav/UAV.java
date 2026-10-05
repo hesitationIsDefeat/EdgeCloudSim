@@ -5,6 +5,7 @@ import edu.boun.edgecloudsim.edge_server.EdgeHost;
 import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimLogger;
+import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.Pe;
 import org.cloudbus.cloudsim.VmScheduler;
 import org.cloudbus.cloudsim.core.CloudSim;
