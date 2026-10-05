@@ -116,6 +116,11 @@ public class SimSettings {
 	private double CENTRALIZED_CONTROLLER_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
 	private String currentTaskPartitionPolicy;
+	// ONAT: tutorial14's swept x-axis (partition count instead of device count) - see
+	// getPartitionCountOptions()/setPartitionCountOverride(). Empty for tutorials that
+	// don't define partition_count_options, so they are unaffected.
+	private int[] PARTITION_COUNT_OPTIONS;
+	private int currentPartitionCountOverride = -1;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
 	// ONAT: SAR (Search & Rescue) team parameters (tutorial8). Defaulted to 0/empty
@@ -257,6 +262,17 @@ public class SimSettings {
 			// don't use a centralized controller are unaffected.
 			CENTRALIZED_CONTROLLER_INTERVAL = Double.parseDouble(prop.getProperty("centralized_controller_interval", String.valueOf(UAV_MOBILITY_INTERVAL))); //seconds
 			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
+
+			// ONAT: see PARTITION_COUNT_OPTIONS field comment - optional, empty by default.
+			String partitionCountOptionsProp = prop.getProperty("partition_count_options", "").trim();
+			if (partitionCountOptionsProp.isEmpty()) {
+				PARTITION_COUNT_OPTIONS = new int[0];
+			} else {
+				String[] partitionCountOptionsStr = partitionCountOptionsProp.split(",");
+				PARTITION_COUNT_OPTIONS = new int[partitionCountOptionsStr.length];
+				for (int i = 0; i < partitionCountOptionsStr.length; i++)
+					PARTITION_COUNT_OPTIONS[i] = Integer.parseInt(partitionCountOptionsStr[i].trim());
+			}
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
@@ -719,6 +735,19 @@ public class SimSettings {
 		return currentTaskPartitionPolicy;
 	}
 
+	/** ONAT: tutorial14's partition-count sweep values (e.g. 1,2,4,8,16), empty if unset. */
+	public int[] getPartitionCountOptions()
+	{
+		return PARTITION_COUNT_OPTIONS;
+	}
+
+	/** ONAT: overrides every partitionable app's applications.xml partition_count for
+	 * the current run; pass <= 0 to clear the override and fall back to applications.xml. */
+	public void setPartitionCountOverride(int partitionCount)
+	{
+		currentPartitionCountOverride = partitionCount;
+	}
+
 
 
 	public double getNorthernBound() {
@@ -816,6 +845,8 @@ public class SimSettings {
 
 	public int getTaskPartitionCount(int taskType)
 	{
+		if(currentPartitionCountOverride > 0)
+			return currentPartitionCountOverride;
 		return taskPartitionCount[taskType];
 	}
 
