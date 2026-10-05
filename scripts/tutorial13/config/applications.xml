@@ -42,8 +42,8 @@
 	     sub-tasks, SITUATION_AWARENESS_ALERTS splits into 2. -->
 	<application name="DISASTER_MAP_FUSION">
 		<usage_percentage>50</usage_percentage>
-		<partitionable>false</partitionable>
-		<partition_count>2</partition_count>
+		<partitionable>true</partitionable>
+		<partition_count>4</partition_count>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
 		<poisson_interarrival>2</poisson_interarrival>
