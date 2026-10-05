@@ -117,12 +117,14 @@ public class MM1Queue extends NetworkModel {
 			
 			if(weight != 0) {
 				// Accumulate WLAN inter-arrival time (weighted by task frequency)
-				WlanPoissonMean += (SS.getTaskLookUpTable()[i][2]) * weight;
+				double taskPoissonMean = SS.getTaskLookUpTable()[i][2];
+				WlanPoissonMean += taskPoissonMean * weight;
 
 				// Calculate WAN inter-arrival time based on cloud processing percentage
-				// Higher cloud percentage means more frequent WAN communications
+				// Higher cloud percentage means more frequent WAN communications.
+				// Uses this task's own poisson mean, not the running WlanPoissonMean sum.
 				double percentageOfCloudCommunication = SS.getTaskLookUpTable()[i][1];
-				WanPoissonMean += (WlanPoissonMean) * ((double)100 / percentageOfCloudCommunication) * weight;
+				WanPoissonMean += taskPoissonMean * ((double)100 / percentageOfCloudCommunication) * weight;
 
 				// Accumulate weighted average input and output data sizes
 				avgTaskInputSize += SS.getTaskLookUpTable()[i][5] * weight;
@@ -134,6 +136,7 @@ public class MM1Queue extends NetworkModel {
 
 		// Normalize accumulated values by number of active task types
 		WlanPoissonMean = WlanPoissonMean / numOfTaskType;
+		WanPoissonMean = WanPoissonMean / numOfTaskType;
 		avgTaskInputSize = avgTaskInputSize / numOfTaskType;
 		avgTaskOutputSize = avgTaskOutputSize / numOfTaskType;
 	}
@@ -320,14 +323,14 @@ public class MM1Queue extends NetworkModel {
 	 * </ul></p>
 	 * 
 	 * <p>If the system becomes unstable (λ ≥ μ) or delay exceeds 5 seconds,
-	 * the method returns -1 to indicate transmission failure.</p>
+	 * the method returns 0.0 to indicate transmission failure.</p>
 	 * 
 	 * @param propagationDelay physical propagation delay in seconds
 	 * @param bandwidth available bandwidth in Kbps
 	 * @param PoissonMean mean inter-arrival time for individual devices in seconds
 	 * @param avgTaskSize average task size in KB
 	 * @param deviceCount number of competing devices at the same location
-	 * @return total delay in seconds, or -1 if system is overloaded
+	 * @return total delay in seconds, or 0.0 if system is overloaded
 	 */
 	private double calculateMM1(double propagationDelay, int bandwidth /*Kbps*/, double PoissonMean, double avgTaskSize /*KB*/, int deviceCount){
 		double Bps = 0, mu = 0, lamda = 0;
@@ -339,19 +342,24 @@ public class MM1Queue extends NetworkModel {
 		Bps = bandwidth * (double)1000 / (double)8;
 		
 		// Calculate arrival rate: λ = device_count / mean_inter_arrival_time
-		lamda = ((double)1 / (double)PoissonMean);
+		lamda = ((double)1 / (double)PoissonMean) * (double)deviceCount;
 		
 		// Calculate service rate: μ = bandwidth / task_size
 		mu = Bps / avgTaskSize;
-		
-		// Apply M/M/1 formula: W = 1/(μ - λ×N) where N is device count
-		double result = (double)1 / (mu - lamda * (double)deviceCount);
+
+		// Overloaded queue (arrival rate >= service rate): 1/(mu-lamda) would be
+		// negative/undefined, so reject up front instead of returning a bogus delay.
+		if (mu <= lamda) return 0.0;
+
+		// Apply M/M/1 formula: W = 1/(μ - λ)
+		double result = (double)1 / (mu - lamda);
 
 		// Add physical propagation delay
 		result += propagationDelay;
 
-		// Return -1 if delay is excessive (indicates network overload)
-		return (result > 5) ? -1 : result;
+		// Return 0.0 if delay is excessive (indicates network overload) - matches the
+		// 0.0-means-rejected convention used elsewhere (e.g. UAVNetworkModel).
+		return (result > 5) ? 0.0 : result;
 	}
 
 	/**
