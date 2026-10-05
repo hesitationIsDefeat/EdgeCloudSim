@@ -157,12 +157,18 @@ public class BasicEdgeOrchestrator extends EdgeOrchestrator {
 		
 		// Apply the configured placement algorithm within the selected host
 		if(policy.equalsIgnoreCase("RANDOM_FIT")){
-			// Randomly select a VM and check if it can accommodate the task
-			int randomIndex = SimUtils.getRandomNumber(0, vmArray.size()-1);
-			double requiredCapacity = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(vmArray.get(randomIndex).getVmType());
-			double targetVmCapacity = (double)100 - vmArray.get(randomIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
-			if(requiredCapacity <= targetVmCapacity)
-				selectedVM = vmArray.get(randomIndex);
+			// Random starting point, then scan every VM on this host once so a capable
+			// VM is found if one exists, instead of giving up after a single pick.
+			int startIndex = SimUtils.getRandomNumber(0, vmArray.size()-1);
+			for(int offset=0; offset<vmArray.size(); offset++){
+				int vmIndex = (startIndex + offset) % vmArray.size();
+				double requiredCapacity = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(vmArray.get(vmIndex).getVmType());
+				double targetVmCapacity = (double)100 - vmArray.get(vmIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
+				if(requiredCapacity <= targetVmCapacity){
+					selectedVM = vmArray.get(vmIndex);
+					break;
+				}
+			}
 		}
 		else if(policy.equalsIgnoreCase("WORST_FIT")){
 			// Select VM with maximum available capacity (load balancing)
@@ -229,15 +235,23 @@ public class BasicEdgeOrchestrator extends EdgeOrchestrator {
 		EdgeVM selectedVM = null;
 		
 		if(policy.equalsIgnoreCase("RANDOM_FIT")){
-			// Randomly select both host and VM for maximum distribution
-			int randomHostIndex = SimUtils.getRandomNumber(0, numberOfHost-1);
-			List<EdgeVM> vmArray = SimManager.getInstance().getEdgeServerManager().getVmList(randomHostIndex);
-			int randomIndex = SimUtils.getRandomNumber(0, vmArray.size()-1);
-			
-			double requiredCapacity = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(vmArray.get(randomIndex).getVmType());
-			double targetVmCapacity = (double)100 - vmArray.get(randomIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
-			if(requiredCapacity <= targetVmCapacity)
-				selectedVM = vmArray.get(randomIndex);
+			// Random starting host+VM, then scan every VM on every host once so a
+			// capable VM is found if one exists, instead of giving up after one pick.
+			int startHostIndex = SimUtils.getRandomNumber(0, numberOfHost-1);
+			for(int hostOffset=0; hostOffset<numberOfHost && selectedVM==null; hostOffset++){
+				int hostIndex = (startHostIndex + hostOffset) % numberOfHost;
+				List<EdgeVM> vmArray = SimManager.getInstance().getEdgeServerManager().getVmList(hostIndex);
+				int startVmIndex = SimUtils.getRandomNumber(0, vmArray.size()-1);
+				for(int vmOffset=0; vmOffset<vmArray.size(); vmOffset++){
+					int vmIndex = (startVmIndex + vmOffset) % vmArray.size();
+					double requiredCapacity = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(vmArray.get(vmIndex).getVmType());
+					double targetVmCapacity = (double)100 - vmArray.get(vmIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
+					if(requiredCapacity <= targetVmCapacity){
+						selectedVM = vmArray.get(vmIndex);
+						break;
+					}
+				}
+			}
 		}
 		else if(policy.equalsIgnoreCase("WORST_FIT")){
 			// Find VM with maximum available capacity across all hosts (global load balancing)
