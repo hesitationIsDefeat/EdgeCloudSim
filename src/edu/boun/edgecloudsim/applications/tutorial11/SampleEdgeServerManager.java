@@ -20,6 +20,7 @@ import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.edge_server.EdgeVmAllocationPolicy_Custom;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.utils.Location;
+import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.*;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
@@ -45,6 +46,8 @@ import java.util.List;
 
 public class SampleEdgeServerManager extends EdgeServerManager{
 	private int hostIdCounter; // globally unique incremental host id across all datacenters
+	// ONAT: max random offset (m) applied to each host's starting position - see createHosts.
+	private static final int HOST_POSITION_OFFSET_RANGE = 100;
 
 	public SampleEdgeServerManager() {
 		hostIdCounter = 0; // reset for each simulation run
@@ -238,7 +241,25 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 					new VmSchedulerSpaceShared(peList)
 				);
 			
-			host.setPlace(new Location(placeTypeIndex, wlan_id, x_pos, y_pos));
+			// ONAT: jitter each host within HOST_POSITION_OFFSET_RANGE so UAVs sharing a
+			// datacenter don't start perfectly coincident - without this, K-means seeds
+			// multiple cluster centers at the exact same point, so only one ever attracts
+			// any devices and its co-located siblings sit frozen at the start corner for
+			// the whole simulation. Mirrors DefaultEdgeServerManager's existing approach.
+			double angle = SimUtils.RNG.nextDouble() * 2 * Math.PI;
+			double dist = SimUtils.RNG.nextDouble() * HOST_POSITION_OFFSET_RANGE;
+			int hostX = x_pos + (int) Math.round(dist * Math.cos(angle));
+			int hostY = y_pos + (int) Math.round(dist * Math.sin(angle));
+
+			double westernBound = SimSettings.getInstance().getWesternBound();
+			double easternBound = SimSettings.getInstance().getEasternBound();
+			double southernBound = SimSettings.getInstance().getSouthernBound();
+			double northernBound = SimSettings.getInstance().getNorthernBound();
+
+			hostX = (int) Math.max(westernBound, Math.min(easternBound, hostX));
+			hostY = (int) Math.max(southernBound, Math.min(northernBound, hostY));
+
+			host.setPlace(new Location(placeTypeIndex, wlan_id, hostX, hostY));
 			hostList.add(host);
 			hostIdCounter++;
 		}
