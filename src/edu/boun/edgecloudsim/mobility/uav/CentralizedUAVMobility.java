@@ -276,6 +276,9 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             centerY[u] = loc.getYPos();
         }
 
+        // ONAT: warm-start seeding keeps this stable turn-to-turn, but doesn't
+        // mathematically rule out two seeds swapping clusters (e.g. near-colocated
+        // UAVs, symmetric device layout) - worth a methodology note if results look jumpy.
         runLloydKMeans(deviceX, deviceY, deviceWeight, centerX, centerY);
 
         for (int u = 0; u < numOfUavs; u++) {
