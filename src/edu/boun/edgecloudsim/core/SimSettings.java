@@ -116,10 +116,8 @@ public class SimSettings {
 	private double CENTRALIZED_CONTROLLER_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
 	private String currentTaskPartitionPolicy;
-	// ONAT: tutorial14's swept x-axis (partition count instead of device count) - see
-	// getPartitionCountOptions()/setPartitionCountOverride(). Empty for tutorials that
-	// don't define partition_count_options, so they are unaffected.
-	private int[] PARTITION_COUNT_OPTIONS;
+	// ONAT: per-run override of every partitionable app's partition_count (e.g.
+	// tutorial14's PARTITION_<N> policies) - see setPartitionCountOverride().
 	private int currentPartitionCountOverride = -1;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
@@ -262,17 +260,6 @@ public class SimSettings {
 			// don't use a centralized controller are unaffected.
 			CENTRALIZED_CONTROLLER_INTERVAL = Double.parseDouble(prop.getProperty("centralized_controller_interval", String.valueOf(UAV_MOBILITY_INTERVAL))); //seconds
 			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
-
-			// ONAT: see PARTITION_COUNT_OPTIONS field comment - optional, empty by default.
-			String partitionCountOptionsProp = prop.getProperty("partition_count_options", "").trim();
-			if (partitionCountOptionsProp.isEmpty()) {
-				PARTITION_COUNT_OPTIONS = new int[0];
-			} else {
-				String[] partitionCountOptionsStr = partitionCountOptionsProp.split(",");
-				PARTITION_COUNT_OPTIONS = new int[partitionCountOptionsStr.length];
-				for (int i = 0; i < partitionCountOptionsStr.length; i++)
-					PARTITION_COUNT_OPTIONS[i] = Integer.parseInt(partitionCountOptionsStr[i].trim());
-			}
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
@@ -735,12 +722,6 @@ public class SimSettings {
 		return currentTaskPartitionPolicy;
 	}
 
-	/** ONAT: tutorial14's partition-count sweep values (e.g. 1,2,4,8,16), empty if unset. */
-	public int[] getPartitionCountOptions()
-	{
-		return PARTITION_COUNT_OPTIONS;
-	}
-
 	/** ONAT: overrides every partitionable app's applications.xml partition_count for
 	 * the current run; pass <= 0 to clear the override and fall back to applications.xml. */
 	public void setPartitionCountOverride(int partitionCount)
@@ -840,6 +821,11 @@ public class SimSettings {
 	{
 		if("NO".equals(currentTaskPartitionPolicy))
 			return false;
+		// ONAT: an active partition-count override (e.g. tutorial14's PARTITION_<N>
+		// policies) means partitioning was explicitly requested for this run - force it
+		// regardless of applications.xml's own partitionable flag.
+		if(currentPartitionCountOverride > 0)
+			return true;
 		return taskPartitionable[taskType];
 	}
 
