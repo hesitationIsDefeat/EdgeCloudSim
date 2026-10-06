@@ -16,20 +16,23 @@ def plot_location_heatmap():
     folder_path = config['folder_path']
     output_folder_path = config['output_folder_path']
     num_simulations = config['num_iterations']
-    x_values = config['x_values']
+    start_devices = config['min_devices']
+    step_devices = config['step_devices']
+    end_devices = config['max_devices']
     orchestrator_policy = config['orchestrator_policy']
     
-    num_x_steps = len(x_values)
+    device_counts = np.arange(start_devices, end_devices + 1, step_devices)
+    num_device_steps = len(device_counts)
     place_count = 14  # Number of location to use in heatmap!
 
     # Array to accumulate results
-    results = np.zeros((num_x_steps, place_count))
+    results = np.zeros((num_device_steps, place_count))
     
     # --- Data Reading and Processing ---
     for s in range(1, num_simulations + 1):
-        for i, x_value in enumerate(x_values):
+        for i, num_devices in enumerate(device_counts):
             try:
-                file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{x_value}PARTITIONS_LOCATION.log'
+                file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{num_devices}DEVICES_LOCATION.log'
                 file_path = os.path.join(folder_path, f'ite{s}', file_name)
 
                 # Read data, skipping header (row 1) and time column (col 1)
@@ -96,13 +99,13 @@ def plot_location_heatmap():
     custom_cmap = ListedColormap(matlab_cmap_data)
     
     # Seaborn expects data in a DataFrame for proper labeling
-    results_df = pd.DataFrame(results, index=x_values, columns=range(1, place_count + 1))
+    results_df = pd.DataFrame(results, index=device_counts, columns=range(1, place_count + 1))
     
     sns.heatmap(results_df, cmap=custom_cmap, ax=ax, annot=False) # 'annot=False' to hide numbers on cells
 
     ax.set_title('Mean number of clients per place')
     ax.set_xlabel('Place IDs')
-    ax.set_ylabel(config['x_axis_label'])
+    ax.set_ylabel('# of Clients in simulation')
     
     fig.tight_layout()
 

@@ -11,24 +11,27 @@
 // 1) Parse / default command line args
 // 2) Load simulation settings (config, devices, applications)
 // 3) For each iteration
-//    3.1) For each simulation scenario
-//          3.1.1) For each orchestrator policy
-//                  3.1.1.1) For each task partition policy
-//                             3.1.1.1.1) For each partition count
-//                                          - Initialize CloudSim
-//                                          - Build scenario factory
-//                                          - Create SimManager
-//                                          - Run simulation
-//                                          - Log results and duration
+//    3.1) For each mobile device population size
+//          3.1.1) For each simulation scenario
+//                  3.1.1.1) For each orchestrator policy
+//                  3.1.1.2) For each task partition policy
+//                             - Initialize CloudSim
+//                             - Build scenario factory
+//                             - Create SimManager
+//                             - Run simulation
+//                             - Log results and duration
 // 4) Print total elapsed time
 
-// ONAT: tutorial14 = tutorial13's SAR/UAV wiring, but with a single, fixed-size SAR
-// population (no normal users at all - numOfNormalUsers is always 0) running a single
-// application, LLM_INFERENCE, whose vm_utilization_on_edge (150%) exceeds what a
-// single UAV VM can ever satisfy unpartitioned. Instead of sweeping device count, this
-// tutorial sweeps partition_count_options (e.g. 1,2,4,8,16) as the x-axis, crossed with
-// task_partition_policies (NO vs FULL) as before - see SimSettings.setPartitionCountOverride().
-// UAV mobility is fixed to the PRIORITY_KMEANS_6 variant established in tutorial12/13.
+// ONAT: tutorial14 has a single normal-user population (no SAR members at all - see
+// default_config.properties, which never sets sar_member_percentage, so
+// SS.computeNumOfSarMembers() always returns 0) running a single application,
+// MustPartitionTask, whose vm_utilization_on_edge (120%) exceeds what a single edge VM
+// can ever satisfy unpartitioned. UAV mobility is FIXED to a single KMEANS variant
+// (bare PRIORITY_KMEANS, see uav_mobility_options - only one entry, taken once below,
+// not swept); instead this tutorial sweeps task_partition_policies
+// (PARTITION_1/PARTITION_2/PARTITION_4), each forcing MustPartitionTask to split into
+// exactly that many children regardless of applications.xml's own partition_count -
+// see the PARTITION_POLICY_PATTERN parsing below and SimSettings.setPartitionCountOverride().
 
 package edu.boun.edgecloudsim.applications.tutorial14;
 
@@ -37,6 +40,8 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.CloudSim;
@@ -51,6 +56,12 @@ public class MainApp {
 
     public static final int EXPECTED_NUM_OF_ARGS = 5;
     public static final String APPLICATION_FOLDER = "tutorial14";
+
+    // ONAT: each task_partition_policies entry must look like "PARTITION_<N>" - N is
+    // the exact child count MustPartitionTask is forced to split into for that run
+    // (see SimSettings.setPartitionCountOverride()), overriding applications.xml's own
+    // partition_count regardless of its value.
+    private static final Pattern PARTITION_POLICY_PATTERN = Pattern.compile("PARTITION_(\\d+)");
 
     /**
      * Creates main() to run this example
@@ -113,13 +124,9 @@ public class MainApp {
         SimLogger.printLine("Simulation started at " + now);
         SimLogger.printLine("----------------------------------------------------------------------");
 
-        // ONAT: UAV mobility is fixed for this tutorial (single configured entry, e.g.
-        // PRIORITY_KMEANS_6) - taken once here rather than swept in the loop below.
+        // ONAT: UAV mobility is fixed for this tutorial (single configured entry,
+        // bare PRIORITY_KMEANS) - taken once here rather than swept in the loop below.
         String uavMobilityOption = SS.getUAVMobilityOptions()[0];
-
-        // ONAT: this tutorial has no normal-user population and no device-count sweep -
-        // the SAR/LLM-inference population size is fixed (min == max_number_of_mobile_devices).
-        int numOfSarMembers = SS.getMinNumOfMobileDev();
 
         // For each iteration specified by the user or default range
         for(int iterationNumber=iterationStart; iterationNumber<=iterationEnd; iterationNumber++) {
@@ -155,47 +162,54 @@ public class MainApp {
                 }
             }
 
-            // Iterate through each configured simulation scenario variant
-            for(int k=0; k<SS.getSimulationScenarios().length; k++)
+            // Device population sweep (scalability analysis)
+            for(int j=SS.getMinNumOfMobileDev(); j<=SS.getMaxNumOfMobileDev(); j+=SS.getMobileDevCounterSize())
             {
-                // Evaluate each orchestrator policy under the active scenario
-                for(int i=0; i<SS.getOrchestratorPolicies().length; i++)
+                // Iterate through each configured simulation scenario variant
+                for(int k=0; k<SS.getSimulationScenarios().length; k++)
                 {
-                    // Evaluate each task partition policy under the active scenario
-                    for (int p=0; p<SS.getTaskPartitionPolicies().length; p++) {
-                        String simScenario = SS.getSimulationScenarios()[k];
-                        String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
-                        String taskPartitionPolicy = SS.getTaskPartitionPolicies()[p].trim().toUpperCase();
-                        SS.setTaskPartitionPolicy(taskPartitionPolicy);
+                    // Evaluate each orchestrator policy under the active scenario
+                    for(int i=0; i<SS.getOrchestratorPolicies().length; i++)
+                    {
+                        // Evaluate each task partition policy under the active scenario
+                        for (int p=0; p<SS.getTaskPartitionPolicies().length; p++) {
+                            // Extract current test dimensions
+                            String simScenario = SS.getSimulationScenarios()[k];
+                            String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
+                            String taskPartitionPolicy = SS.getTaskPartitionPolicies()[p].trim().toUpperCase();
+                            SS.setTaskPartitionPolicy(taskPartitionPolicy);
 
-                        // Evaluate each partition count - this tutorial's swept x-axis
-                        for (int c=0; c<SS.getPartitionCountOptions().length; c++) {
-                            int partitionCount = SS.getPartitionCountOptions()[c];
+                            // ONAT: the policy name itself encodes the partition count
+                            // (e.g. "PARTITION_4" -> 4 children) - override it regardless
+                            // of applications.xml's own partition_count for MustPartitionTask.
+                            Matcher partitionPolicyMatcher = PARTITION_POLICY_PATTERN.matcher(taskPartitionPolicy);
+                            if (!partitionPolicyMatcher.matches()) {
+                                SimLogger.printLine("Invalid task partition policy '" + taskPartitionPolicy + "' - expected PARTITION_<N>. Terminating simulation...");
+                                System.exit(1);
+                            }
+                            int partitionCount = Integer.parseInt(partitionPolicyMatcher.group(1));
                             SS.setPartitionCountOverride(partitionCount);
 
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);
 
+                            // ONAT: this tutorial has no SAR population at all (see
+                            // default_config.properties) - always 0, kept for structural
+                            // parity with sibling tutorials' SampleScenarioFactory signature.
+                            int numOfSarMembers = SS.computeNumOfSarMembers(j);
+                            int totalNumOfMobileDevices = j + numOfSarMembers;
+
                             // Log scenario header summarizing experimental factors
                             SimLogger.printLine("Scenario started at " + now);
-                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - Task Partition Policy: " + taskPartitionPolicy + " - Partition Count: " + partitionCount + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
-                            SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - Partition Count: " + partitionCount + " (fixed #SAR members: " + numOfSarMembers + ")");
+                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - Task Partition Policy: " + taskPartitionPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
+                            SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #normal users: " + j + " - #SAR members: " + numOfSarMembers);
                             // Warm-up period: metrics during first interval often excluded from statistical analysis (transient phase).
                             // Consider filtering in post-processing if comparing steady-state KPIs.
-                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + taskPartitionPolicy + "_" + partitionCount + "PARTITIONS");
+                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + taskPartitionPolicy + "_" + j + "DEVICES");
 
                             try
                             {
-                                // ONAT: reset to the SAME seed for every partition-count/policy
-                                // combination within this iteration, so the only things that
-                                // differ between them are the swept variables themselves
-                                // (partition count, task partition policy) - team spawn
-                                // positions, movement, UAV start jitter and task arrivals
-                                // (see SARAwareLoadGenerator/SARTeamMobilityModel) are held
-                                // bit-for-bit identical. Varies per iteration (ite1..ite10)
-                                // for proper statistical independence across repeats.
-                                SimUtils.RNG.setSeed(iterationNumber);
-
+                                // For multi-seed experimentation, wrap this block and vary RNG seeds between iterations.
                                 // Minimal event granularity (0.01) chosen to avoid zero-time collisions
                                 // CloudSim core init:
                                 // num_user: logical users generating events (broker etc.)
@@ -210,11 +224,12 @@ public class MainApp {
                                 CloudSim.init(num_user, calendar, trace_flag, 0.01);
 
                                 // ScenarioFactory encapsulates workload, mobility, network, placement etc.
-                                // No normal users in this tutorial - numOfNormalUsers is always 0.
-                                ScenarioFactory sampleFactory = new SampleScenarioFactory(0, numOfSarMembers, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
+                                ScenarioFactory sampleFactory = new SampleScenarioFactory(j, numOfSarMembers, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
 
                                 // SimManager wires all components, schedules events, and aggregates stats.
-                                SimManager manager = new SimManager(sampleFactory, numOfSarMembers, simScenario, orchestratorPolicy);
+                                // Pass the combined device count so UAV tracking and task submission
+                                // (which iterate ids 0..numOfMobileDevice-1) also cover SAR members.
+                                SimManager manager = new SimManager(sampleFactory, totalNumOfMobileDevices, simScenario, orchestratorPolicy);
                                 // Kick off discrete-event simulation (blocking until completion)
                                 manager.startSimulation();
                             }
@@ -233,10 +248,10 @@ public class MainApp {
                             now = df.format(ScenarioEndDate);
                             SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
                             SimLogger.printLine("----------------------------------------------------------------------");
-                        }//End of partition count loop
-                    }//End of task partition policy loop
-                }//End of orchestrators loop
-            }//End of scenarios loop
+                        }
+                    }//End of orchestrators loop
+                }//End of scenarios loop
+            }//End of mobile devices loop
         }//End of iteration loop
 
         // Final summary for the entire multi-iteration batch

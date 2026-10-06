@@ -29,11 +29,12 @@ import edu.boun.edgecloudsim.network.uav.UAVNetworkModel;
 import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
 
 /**
- * Scenario factory for tutorial14, reusing tutorial13's SAR/UAV wiring but with
- * {@code numOfNormalUsers} always 0 - this tutorial's only population is a fixed-size
- * SAR team running a single partitionable application (LLM_INFERENCE). UAV mobility is
- * fixed to a single {@code PRIORITY_KMEANS} variant; the swept axis is partition count,
- * not UAV mobility or device count (see {@link MainApp}).
+ * Scenario factory for tutorial14: a normal-user population (no SAR team - see
+ * default_config.properties) running a single application, MustPartitionTask, with
+ * centralized UAV mobility fixed to a single {@code PRIORITY_KMEANS} variant (see
+ * {@code uav_mobility_options} in default_config.properties) instead of being swept -
+ * this tutorial instead sweeps {@code task_partition_policies} (see {@link MainApp}).
+ * See {@link CombinedMobilityModel} and {@link SARAwareLoadGenerator}.
  */
 public class SampleScenarioFactory implements ScenarioFactory {
 	private final int numOfNormalUsers;
@@ -46,8 +47,8 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	/**
 	 * Constructor for sample scenario factory.
 	 * 
-	 * @param _numOfNormalUsers Number of normal-user mobile devices (always 0 in this tutorial)
-	 * @param _numOfSarMembers Number of SAR team members (fixed population size)
+	 * @param _numOfNormalUsers Number of normal-user mobile devices (swept population)
+	 * @param _numOfSarMembers Number of SAR team members (fixed, entering later)
 	 * @param _simulationTime Total simulation time in seconds
 	 * @param _orchestratorPolicy Orchestrator policy for task offloading decisions
 	 * @param _simScenario Simulation scenario type (e.g., SINGLE_TIER, TWO_TIER)
@@ -68,8 +69,8 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	
 	/**
 	 * Creates load generator model for task generation patterns.
-	 * @return SARAwareLoadGenerator, restricted to the SAR app subset (LLM_INFERENCE);
-	 * the normal-user subset is always empty since numOfNormalUsers is always 0.
+	 * @return SARAwareLoadGenerator restricted to MustPartitionTask; numOfSarMembers is
+	 * always 0 for this tutorial, so every device is a "normal user".
 	 */
 	@Override
 	public LoadGeneratorModel getLoadGeneratorModel() {
@@ -79,7 +80,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates edge orchestrator for task offloading decisions.
-	 * @return UAVEdgeOrchestrator with configured policy and scenario
+	 * @return BasicEdgeOrchestrator with configured policy and scenario
 	 */
 	@Override
 	public EdgeOrchestrator getEdgeOrchestrator() {
@@ -88,9 +89,9 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates mobility model for device movement patterns.
-	 * @return CombinedMobilityModel: an empty normal-user population (numOfNormalUsers=0)
-	 * plus the fixed-size SAR team, which moves in fixed teams alternating between
-	 * random-walk and stationary phases from the very start of the simulation.
+	 * @return CombinedMobilityModel: normal users converge onto 3 hardcoded meeting
+	 * areas (same as tutorial6); the SAR-team half of this model is unused since
+	 * numOfSarMembers is always 0 for this tutorial.
 	 */
 	@Override
 	public MobilityModel getMobilityModel() {
@@ -115,7 +116,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates network model for communication delay simulation.
-	 * @return UAVNetworkModel for UAV-specialized WLAN delay modeling
+	 * @return MM1Queue model for queueing theory-based network delays
 	 */
 	@Override
 	public NetworkModel getNetworkModel() {
@@ -133,8 +134,10 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
     /**
      * Creates the UAV mobility model: a single {@link CentralizedUAVMobility}
-     * controller with full visibility of every mobile device - just the SAR team in
-     * this tutorial, since there is no normal-user population.
+     * controller (instead of tutorial8/9's per-UAV {@code BasicUAVMobility}) that has
+     * full visibility of every mobile device - including SAR members, once they have
+     * entered the scenario, since both populations share a single device-id space via
+     * {@link CombinedMobilityModel} - and decides every UAV's next move centrally.
      */
     @Override
     public UAVMobilityModel getEdgeMobilityModel() {

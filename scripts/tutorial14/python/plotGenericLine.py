@@ -16,9 +16,7 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
                       ignore_zero_values=False, metric_name=None):
     """
     Reads simulation data, processes it, and generates a line plot.
-    Equivalent to plotGenericLine.m. Unlike every other tutorial's copy, the x-axis
-    here is partition count (an explicit list, e.g. [1,2,4,8,16]) rather than an
-    arithmetic device-count range, and filenames end in "{x}PARTITIONS" not "{x}DEVICES".
+    Equivalent to plotGenericLine.m.
     """
     config = get_configuration()
     
@@ -27,22 +25,25 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
     output_folder_path = config['output_folder_path']
     num_simulations = config['num_iterations']
     scenarios = config['scenario_types']
-    x_values = config['x_values']
+    start_devices = config['min_devices']
+    step_devices = config['step_devices']
+    end_devices = config['max_devices']
     orchestrator_policy = config['orchestrator_policy']
     
-    num_x_steps = len(x_values)
+    device_counts = np.arange(start_devices, end_devices + 1, step_devices)
+    num_device_steps = len(device_counts)
     
     # Array to store all simulation results
-    all_results = np.zeros((num_simulations, len(scenarios), num_x_steps))
+    all_results = np.zeros((num_simulations, len(scenarios), num_device_steps))
     missing_files = {scenario: 0 for scenario in scenarios}
     first_used_file = {scenario: None for scenario in scenarios}
     
     # --- Data Reading Loop ---
     for s in range(1, num_simulations + 1):  # Iterations are 1-based
         for i, scenario in enumerate(scenarios):
-            for j, x_value in enumerate(x_values):
+            for j, num_devices in enumerate(device_counts):
                 try:
-                    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{x_value}PARTITIONS_{app_type}_GENERIC.log'
+                    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_{app_type}_GENERIC.log'
                     file_path = os.path.join(folder_path, f'ite{s}', file_name)
 
                     if first_used_file[scenario] is None and os.path.isfile(file_path):
@@ -88,7 +89,7 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
 
     if num_simulations > 1:
         for i in range(len(scenarios)):
-            for j in range(num_x_steps):
+            for j in range(num_device_steps):
                 data_slice = all_results[:, i, j][~np.isnan(all_results[:, i, j])] / divisor
                 if len(data_slice) > 1:
                     std_err = np.std(data_slice, ddof=1) / np.sqrt(len(data_slice))
@@ -111,20 +112,17 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
         marker_style = config['color_markers'][i] if config['use_color'] else config['bw_markers'][i]
         
         if config['plot_confidence_interval']:
-            ax.errorbar(x_values, results[i, :], yerr=[min_ci_vals[i, :], max_ci_vals[i, :]],
+            ax.errorbar(device_counts, results[i, :], yerr=[min_ci_vals[i, :], max_ci_vals[i, :]],
                         label=legends[i], color=color, fmt=marker_style, capsize=3)
         else:
-            ax.plot(x_values, results[i, :], marker_style, label=legends[i], color=color)
+            ax.plot(device_counts, results[i, :], marker_style, label=legends[i], color=color)
 
     ax.set_xlabel(config['x_axis_label'], fontsize=font_sizes[0])
     ax.set_ylabel(y_label, fontsize=font_sizes[0])
     ax.legend(fontsize=font_sizes[1], loc=legend_pos)
     ax.tick_params(axis='both', which='major', labelsize=font_sizes[2])
-    # ONAT: partition counts double each step (1,2,4,8,16) - a log2 x-axis spaces them
-    # evenly instead of crushing the low end of a linear axis.
-    ax.set_xscale('log', base=2)
-    ax.set_xticks(x_values)
-    ax.set_xticklabels([str(x) for x in x_values])
+    # ONAT: origin at (0,0) instead of a padded/offset left edge
+    ax.set_xlim(0, end_devices + 50)
     ax.set_ylim(bottom=0)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()

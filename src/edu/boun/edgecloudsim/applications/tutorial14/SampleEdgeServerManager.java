@@ -245,8 +245,7 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 			// datacenter don't start perfectly coincident - without this, K-means seeds
 			// multiple cluster centers at the exact same point, so only one ever attracts
 			// any devices and its co-located siblings sit frozen at the start corner for
-			// the whole simulation (confirmed via UAV_LOCATIONS.log), silently shrinking
-			// effective UAV capacity. Mirrors DefaultEdgeServerManager's existing approach.
+			// the whole simulation. Mirrors DefaultEdgeServerManager's existing approach.
 			double angle = SimUtils.RNG.nextDouble() * 2 * Math.PI;
 			double dist = SimUtils.RNG.nextDouble() * HOST_POSITION_OFFSET_RANGE;
 			int hostX = x_pos + (int) Math.round(dist * Math.cos(angle));

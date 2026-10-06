@@ -6,10 +6,10 @@ import edu.boun.edgecloudsim.utils.Location;
 
 /**
  * ONAT:
- * Combined mobility model for tutorial14 (identical to tutorial13's), hosting two
+ * Combined mobility model for tutorial14 (identical to tutorial12's), hosting two
  * separate populations sharing a single device-id space:
- * - Normal users, ids [0, numOfNormalUsers) - always empty in this tutorial (0 users) -
- *   reuse tutorial6's {@link ConvergingMobilityModel} (crowd converges onto 3 meeting areas).
+ * - Normal users, ids [0, numOfNormalUsers) - reuse tutorial6's
+ *   {@link ConvergingMobilityModel} (crowd converges onto 3 meeting areas).
  * - SAR (Search &amp; Rescue) team members, ids [numOfNormalUsers, numOfNormalUsers + numOfSarMembers)
  *   - use {@link SARTeamMobilityModel} (fixed teams, random-walk/stop cycle, delayed entry).
  *

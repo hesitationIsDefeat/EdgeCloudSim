@@ -1,13 +1,16 @@
 import os
+import re
 
-# ONAT: tutorial14's x-axis is partition count (1,2,4,8,16 - an explicit, non-arithmetic
-# list read from partition_count_options), NOT device count like every other tutorial -
-# see x_values below and plotGenericLine.py's rewritten data-reading loop.
+# ONAT: single source of truth is default_config.properties's task_partition_policies -
+# scenario_types/legends/colors/markers below are all derived from it, so adding a new
+# PARTITION_<N> policy there is enough; no python changes needed. UAV mobility is fixed
+# to a single KMEANS (PRIORITY_KMEANS) variant - see MainApp.java.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
 _ROOT_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
 _TUTORIAL_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'tutorial_names.properties')
 
+# Cycled by index so any number of scenarios gets a distinct color/marker automatically.
 _COLOR_PALETTE = [
     [0.55, 0, 0],
     [0, 0.15, 0.6],
@@ -20,6 +23,16 @@ _BW_MARKER_PALETTE = ['-k*', '-ko', '-kv', '-ks', '-k^', '-kd']
 _COLOR_MARKER_PALETTE = ['-*', '-o', '-v', '-s', '-^', '-d']
 
 
+def _parse_task_partition_policies(properties_path):
+    """Reads the comma separated task_partition_policies list from default_config.properties."""
+    with open(properties_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('task_partition_policies='):
+                return [opt.strip().upper() for opt in line.split('=', 1)[1].split(',') if opt.strip()]
+    raise ValueError(f"task_partition_policies not found in {properties_path}")
+
+
 def _parse_property(properties_path, key):
     """Reads a single `key=value` line from default_config.properties, or None if absent."""
     with open(properties_path, 'r') as f:
@@ -28,14 +41,6 @@ def _parse_property(properties_path, key):
             if line.startswith(f'{key}='):
                 return line.split('=', 1)[1].strip()
     return None
-
-
-def _parse_csv_property(properties_path, key):
-    """Reads a comma separated `key=a,b,c` line from default_config.properties."""
-    value = _parse_property(properties_path, key)
-    if not value:
-        raise ValueError(f"{key} not found in {properties_path}")
-    return [v.strip() for v in value.split(',') if v.strip()]
 
 
 def _get_orchestrator_policy(properties_path):
@@ -50,20 +55,16 @@ def _get_orchestrator_policy(properties_path):
     return value.split(',')[0].strip()
 
 
-def get_fixed_sar_member_count():
-    """
-    tutorial14 has no normal-user population - every device is a SAR/LLM-inference
-    member, and the population size is FIXED directly via min_number_of_mobile_devices
-    (== max_number_of_mobile_devices), unlike tutorial8-13's percentage-based
-    computeNumOfSarMembers(). Mirrors MainApp.java's SS.getMinNumOfMobileDev() read.
-    """
-    value = _parse_property(_PROPERTIES_PATH, 'min_number_of_mobile_devices')
-    return int(value) if value else 0
+_PARTITION_POLICY_PATTERN = re.compile(r'PARTITION_(\d+)')
 
 
 def _make_legend(scenario_type):
-    """Turns 'NO'/'FULL' into 'No Partitioning'/'Full Partitioning'."""
-    return f'{scenario_type.title()} Partitioning'
+    """Turns 'PARTITION_1'/'PARTITION_2'/'PARTITION_4' into '1 Partition'/'2 Partitions'/'4 Partitions'."""
+    match = _PARTITION_POLICY_PATTERN.match(scenario_type)
+    if not match:
+        return scenario_type
+    count = int(match.group(1))
+    return f'{count} Partition' if count == 1 else f'{count} Partitions'
 
 
 def _load_tutorial_display_name(tutorial_key):
@@ -87,11 +88,9 @@ def get_configuration():
     Returns a dictionary containing all simulation and plotting parameters.
     Equivalent to getConfiguration.m.
     """
-    scenario_types = _parse_csv_property(_PROPERTIES_PATH, 'task_partition_policies')
+    scenario_types = _parse_task_partition_policies(_PROPERTIES_PATH)
     legends = [_make_legend(scenario_type) for scenario_type in scenario_types]
     num_scenarios = len(scenario_types)
-
-    x_values = [int(v) for v in _parse_csv_property(_PROPERTIES_PATH, 'partition_count_options')]
 
     config = {
         'folder_path': '../../../sim_results/tutorial14',
@@ -105,13 +104,14 @@ def get_configuration():
         'legends': legends,
         'figure_position': [6, 3, 15, 15],  # [left, bottom, width, height] in centimeters
         'font_sizes': [13, 12, 12],  # [xy_label, legend, xy_axis_ticks]
-        'x_axis_label': 'Partition Count',
-        # ONAT: explicit, non-arithmetic x-axis values (replaces min/step/max device count).
-        'x_values': x_values,
-        # ONAT: partition count(s) to render heat map videos for (plotUserLocationHeatmapVideo.py).
-        # Defaults to the largest configured partition count (most granular partitioning).
-        'heatmap_video_partition_counts': [x_values[-1]] if x_values else [],
-        'use_scientific_notation_x_axis': False,
+        'x_axis_label': 'Number of Clients',
+        'min_devices': 100,
+        'step_devices': 100,
+        'max_devices': 800,
+        # ONAT: device counts to render heat map videos for (plotUserLocationHeatmapVideo.py),
+        # used instead of sweeping every step_devices increment since videos are expensive to generate.
+        'heatmap_video_devices': [800],
+        'use_scientific_notation_x_axis': False, # For future use
         'save_figure_as_pdf': True,
         'plot_confidence_interval': True,
         'use_color': True,

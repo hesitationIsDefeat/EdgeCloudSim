@@ -1,25 +1,21 @@
 <?xml version="1.0"?>
 <applications>
-	<!-- ONAT: tutorial14 has no normal-user population at all - every mobile device is
-	     a SAR member (see sar_application_names in default_config.properties) running
-	     this single application. vm_utilization_on_edge (150%) deliberately EXCEEDS a
-	     single UAV VM's 100% capacity, so an unpartitioned (NO policy) instance of this
-	     task can NEVER be admitted - only FULL partitioning (which divides both the
-	     compute length AND the per-child utilization share by partition_count) can ever
-	     make it fit. partition_count here is a placeholder; MainApp overrides it every
-	     run from partition_count_options (1,2,4,8,16) via
-	     SimSettings.setPartitionCountOverride(). -->
-	<application name="LLM_INFERENCE">
+	<!-- ONAT: tutorial14's only application. vm_utilization_on_edge (120%) deliberately
+	     EXCEEDS a single edge VM's 100% capacity, so an unpartitioned task (PARTITION_1)
+	     can NEVER be admitted on the edge tier - only partitioning into >=2 pieces (which
+	     divides the per-child utilization share by partition count, see
+	     CpuUtilizationModel_Custom) can make it fit. partition_count below is a
+	     placeholder; MainApp overrides it every run according to the active
+	     task_partition_policy (PARTITION_1/PARTITION_2/PARTITION_4 - see
+	     SimSettings.setPartitionCountOverride()). -->
+	<application name="MustPartitionTask">
 		<usage_percentage>100</usage_percentage>
 		<partitionable>true</partitionable>
 		<partition_count>4</partition_count>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
-		<!-- ONAT: 30 (not 5) keeps aggregate demand (devices*duty_cycle*task_length/interarrival
-		     = 50*0.75*20000/30 ~= 25000 MI/s) under total UAV capacity (16 UAVs*2500 MIPS =
-		     40000 MI/s, ~62%), so FULL partitioning has headroom to actually succeed instead
-		     of the whole system being perpetually oversubscribed regardless of partition count. -->
-		<poisson_interarrival>30</poisson_interarrival>
+		<!-- ONAT: each user sends one request every 2 minutes on average. -->
+		<poisson_interarrival>120</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
 		<active_period>45</active_period>
 		<idle_period>15</idle_period>
@@ -27,8 +23,8 @@
 		<data_download>100</data_download>
 		<task_length>20000</task_length>
 		<required_core>1</required_core>
-		<vm_utilization_on_edge>100</vm_utilization_on_edge>
-		<vm_utilization_on_cloud>3</vm_utilization_on_cloud>
+		<vm_utilization_on_edge>120</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
 	</application>
 </applications>

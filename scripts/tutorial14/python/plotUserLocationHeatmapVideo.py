@@ -8,7 +8,7 @@ matplotlib.use('Agg')  # video is rendered to a file, no display is needed
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from config import get_configuration, get_fixed_sar_member_count
+from config import get_configuration
 
 # Simulation area boundaries in meters.
 # These must match northern_bound / southern_bound / eastern_bound / western_bound
@@ -25,19 +25,16 @@ def _read_location_log(file_path, id_column):
     data = pd.read_csv(file_path, sep=';', header=None, skiprows=1,
                         names=['time', id_column, 'x', 'y'])
     # ONAT: round so that timestamps sampled via repeated event rescheduling (UAVs)
-    # line up with timestamps computed via direct multiplication (SAR members).
+    # line up with timestamps computed via direct multiplication (users).
     data['time'] = data['time'].round(2)
     return data
 
 
-def generate_user_location_heatmap_video(scenario=None, partition_count=None, iteration=1,
+def generate_user_location_heatmap_video(scenario=None, num_devices=None, iteration=1,
                                           grid_size=40, fps=5, output_path=None):
     """
-    Generates a video showing how the spatial distribution (heat map) of SAR/LLM-inference
-    devices changes throughout the simulation, with UAVs overlaid as distinctly colored
-    markers, based on the per-device position log. Unlike tutorial12/13, there is no
-    normal-user population here - every device is a SAR member, so all positions are
-    plotted as the "SAR members" series (no normal-user heat map to separate out).
+    Generates a video showing how the spatial distribution (heat map) of users
+    changes throughout the simulation, based on the per-user position log.
     """
     config = get_configuration()
     folder_path = config['folder_path']
@@ -46,11 +43,10 @@ def generate_user_location_heatmap_video(scenario=None, partition_count=None, it
 
     if scenario is None:
         scenario = config['scenario_types'][0]
-    if partition_count is None:
-        partition_count = config['heatmap_video_partition_counts'][0]
-    num_sar_members = get_fixed_sar_member_count()
+    if num_devices is None:
+        num_devices = config['max_devices']
 
-    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{partition_count}PARTITIONS_USER_LOCATIONS.log'
+    file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_USER_LOCATIONS.log'
     file_path = os.path.join(folder_path, f'ite{iteration}', file_name)
 
     print(f"Reading user location log -> {file_path}")
@@ -65,10 +61,7 @@ def generate_user_location_heatmap_video(scenario=None, partition_count=None, it
         print("No data found in the log file, aborting.")
         return
 
-    # ONAT: this tutorial has no normal-user population - every device id is a SAR member.
-    sar_data = data
-
-    uav_file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{partition_count}PARTITIONS_UAV_LOCATIONS.log'
+    uav_file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{scenario}_{num_devices}DEVICES_UAV_LOCATIONS.log'
     uav_file_path = os.path.join(folder_path, f'ite{iteration}', uav_file_name)
     try:
         uav_data = _read_location_log(uav_file_path, id_column='uav_id')
@@ -85,7 +78,7 @@ def generate_user_location_heatmap_video(scenario=None, partition_count=None, it
     heatmaps = []
     uav_positions = []
     for t in time_steps:
-        frame_data = sar_data[sar_data['time'] == t]
+        frame_data = data[data['time'] == t]
         hist, _, _ = np.histogram2d(frame_data['x'], frame_data['y'], bins=[x_edges, y_edges])
         heatmaps.append(hist.T)
 
@@ -106,22 +99,22 @@ def generate_user_location_heatmap_video(scenario=None, partition_count=None, it
                               label='UAVs', zorder=4)
     ax.set_xlabel('X Position (m)')
     ax.set_ylabel('Y Position (m)')
-    title = ax.set_title(f'{scenario} ({partition_count} partitions, t = {time_steps[0]:.0f}s)')
+    title = ax.set_title(f'{scenario} (t = {time_steps[0]:.0f}s)')
     ax.legend(loc='upper right')
-    fig.colorbar(im, ax=ax, label=f'# of SAR members ({num_sar_members} total)')
+    fig.colorbar(im, ax=ax, label='# of Clients')
     fig.tight_layout()
 
     def update(frame_index):
         im.set_data(heatmaps[frame_index])
         uav_scatter.set_offsets(uav_positions[frame_index])
-        title.set_text(f'{scenario} ({partition_count} partitions, t = {time_steps[frame_index]:.0f}s)')
+        title.set_text(f'{scenario} (t = {time_steps[frame_index]:.0f}s)')
         return im, uav_scatter, title
 
     ani = animation.FuncAnimation(fig, update, frames=len(time_steps), blit=False)
 
     if output_path is None:
         os.makedirs(output_folder_path, exist_ok=True)
-        output_path = os.path.join(output_folder_path, f'user_location_heatmap_{scenario}_{partition_count}PARTITIONS.mp4')
+        output_path = os.path.join(output_folder_path, f'user_location_heatmap_{scenario}_{num_devices}DEVICES.mp4')
 
     ani.save(output_path, writer=animation.FFMpegWriter(fps=fps))
     print(f"Video saved to {output_path}")
@@ -134,13 +127,13 @@ def _parse_args():
         description='Generate a video of the client density heat map over the course of the simulation.')
     parser.add_argument('--scenario', default=None, choices=config['scenario_types'],
                          help='Task partition policy to visualize. If omitted, a video is generated for every policy.')
-    parser.add_argument('--partition-count', type=int, nargs='+', default=None,
-                         help='Partition count(s) to visualize. '
-                              "If omitted, videos are generated for config.py's heatmap_video_partition_counts list.")
+    parser.add_argument('--num-devices', type=int, nargs='+', default=None,
+                         help='Number(s) of mobile devices of the simulation to visualize. '
+                              "If omitted, videos are generated for config.py's heatmap_video_devices list.")
     parser.add_argument('--iteration', type=int, default=1, help='Simulation iteration (ite<N>) to visualize.')
     parser.add_argument('--grid-size', type=int, default=40, help='Number of heat map bins per axis.')
     parser.add_argument('--fps', type=int, default=5, help='Frames per second of the generated video.')
-    parser.add_argument('--output', default=None, help='Output video file path (only valid with a single --scenario and --partition-count).')
+    parser.add_argument('--output', default=None, help='Output video file path (only valid with a single --scenario and --num-devices).')
     return parser.parse_args()
 
 
@@ -149,16 +142,15 @@ if __name__ == '__main__':
     args = _parse_args()
     config = get_configuration()
 
-    # ONAT: render every task partition policy (NO/FULL) unless the user asked for a
-    # specific one via --scenario.
+    # ONAT: render every task partition policy unless the user asked for a specific
+    # one via --scenario.
     scenarios_to_render = [args.scenario] if args.scenario else config['scenario_types']
-    # ONAT: default to config.py's heatmap_video_partition_counts list (the largest
-    # configured partition count by default, since that's the most granular split).
-    partition_counts_to_render = args.partition_count if args.partition_count else config['heatmap_video_partition_counts']
-    single_output = len(scenarios_to_render) == 1 and len(partition_counts_to_render) == 1
+    # ONAT: default to config.py's heatmap_video_devices list so a single run covers the desired load cases.
+    device_counts_to_render = args.num_devices if args.num_devices else config['heatmap_video_devices']
+    single_output = len(scenarios_to_render) == 1 and len(device_counts_to_render) == 1
     for scenario in scenarios_to_render:
-        for partition_count in partition_counts_to_render:
-            generate_user_location_heatmap_video(scenario=scenario, partition_count=partition_count,
+        for num_devices in device_counts_to_render:
+            generate_user_location_heatmap_video(scenario=scenario, num_devices=num_devices,
                                                   iteration=args.iteration, grid_size=args.grid_size,
                                                   fps=args.fps,
                                                   output_path=args.output if single_output else None)

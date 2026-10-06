@@ -13,13 +13,13 @@ import edu.boun.edgecloudsim.utils.SimUtils;
 
 /**
  * ONAT:
- * SAR (Search &amp; Rescue) team mobility model (identical to tutorial13's).
+ * SAR (Search &amp; Rescue) team mobility model (identical to tutorial12's).
  *
  * SAR members are grouped into fixed, non-overlapping teams of {@code teamSize}
  * members (4 by default). Before {@code entryTime} every SAR member sits at a
  * fixed staging point outside the area of interest - they have not entered the
- * scenario yet. From {@code entryTime} onwards (0 in this tutorial, so effectively
- * from the start), each team's reference point alternates between:
+ * scenario yet. From {@code entryTime} onwards, each team's reference point
+ * alternates between:
  * - MOVE phase: picks a new target between {@code MIN_MOVE_DISTANCE} and
  *   {@code MAX_MOVE_DISTANCE} meters away and walks straight towards it at
  *   {@code moveSpeed}, stepping every few seconds like the other crowd mobility
@@ -169,9 +169,7 @@ public class SARTeamMobilityModel extends MobilityModel {
     /** Picks a random point {@code MIN_MOVE_DISTANCE}-{@code MAX_MOVE_DISTANCE} meters away from {@code from}, clamped to the map bounds. */
     private static Location pickNearbyTarget(Location from) {
         double distance = SimUtils.getRandomDoubleNumber(MIN_MOVE_DISTANCE, MAX_MOVE_DISTANCE);
-        // ONAT: SimUtils.RNG (not Math.random()) so MainApp's per-iteration seed reset
-        // also controls this draw, keeping team trajectories reproducible across the sweep.
-        double angle = SimUtils.RNG.nextDouble() * 2 * Math.PI;
+        double angle = Math.random() * 2 * Math.PI;
         int targetX = clamp(from.getXPos() + (int) Math.round(distance * Math.cos(angle)),
                 SimSettings.getInstance().getWesternBound(), SimSettings.getInstance().getEasternBound());
         int targetY = clamp(from.getYPos() + (int) Math.round(distance * Math.sin(angle)),

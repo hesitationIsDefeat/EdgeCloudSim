@@ -15,19 +15,22 @@ def plot_delay_reason(is_edge):
     folder_path = config['folder_path']
     output_folder_path = config['output_folder_path']
     num_simulations = config['num_iterations']
-    x_values = config['x_values']
+    start_devices = config['min_devices']
+    step_devices = config['step_devices']
+    end_devices = config['max_devices']
     orchestrator_policy = config['orchestrator_policy']
     
-    num_x_steps = len(x_values)
+    device_counts = np.arange(start_devices, end_devices + 1, step_devices)
+    num_device_steps = len(device_counts)
 
-    all_results = np.zeros((num_simulations, num_x_steps, 2))
+    all_results = np.zeros((num_simulations, num_device_steps, 2))
 
     # --- Data Reading ---
     for s in range(1, num_simulations + 1):
-        for j, x_value in enumerate(x_values):
+        for j, num_devices in enumerate(device_counts):
             try:
                 # Uses the configured orchestrator policy (default_config.properties) rather than a hardcoded one
-                file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{x_value}PARTITIONS_ALL_APPS_GENERIC.log'
+                file_name = f'SIMRESULT_DEFAULT_SCENARIO_{orchestrator_policy}_{num_devices}DEVICES_ALL_APPS_GENERIC.log'
                 file_path = os.path.join(folder_path, f'ite{s}', file_name)
 
                 # Read the entire relevant data block once
@@ -65,9 +68,9 @@ def plot_delay_reason(is_edge):
     bar_width = 0.8 # Standard bar width
     
     # Bottom bar (Processing Time)
-    ax.bar(x_values, results[:, 0], width=bar_width, color=[.45, .45, .45], label='processing time')
+    ax.bar(device_counts, results[:, 0], width=bar_width, color=[.45, .45, .45], label='processing time')
     # Top bar (Network Delay), starting from the top of the bottom bar
-    ax.bar(x_values, results[:, 1], width=bar_width, bottom=results[:, 0], color=[.90, .90, .90], label='network delay')
+    ax.bar(device_counts, results[:, 1], width=bar_width, bottom=results[:, 0], color=[.90, .90, .90], label='network delay')
 
     # --- Labels and Legends ---
     if is_edge:
@@ -80,8 +83,10 @@ def plot_delay_reason(is_edge):
         filename = 'cloud_delay_reason'
 
     ax.set_xlabel(config['x_axis_label'])
-    ax.set_xticks(x_values)
-    ax.set_xticklabels([str(x) for x in x_values])
+    ax.set_xticks(device_counts)
+    ax.set_xticklabels(device_counts)
+    # ONAT: origin at (0,0) instead of a padded/offset left edge
+    ax.set_xlim(0, end_devices + step_devices / 2)
     ax.set_ylim(bottom=0)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)

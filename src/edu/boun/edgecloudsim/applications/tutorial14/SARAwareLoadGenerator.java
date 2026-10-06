@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.commons.math3.distribution.ExponentialDistribution;
-import org.apache.commons.math3.random.RandomGenerator;
-import org.apache.commons.math3.random.RandomGeneratorFactory;
 
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
@@ -18,14 +16,16 @@ import edu.boun.edgecloudsim.utils.TaskProperty;
 
 /**
  * ONAT:
- * Population-aware load generator for tutorial14 (identical to tutorial13's). Behaves like
+ * Population-aware load generator, reused unchanged from tutorial8-13. Behaves like
  * {@link edu.boun.edgecloudsim.task_generator.IdleActiveLoadGenerator}, but
  * separates devices into two independent populations that each pick their
  * application only from their own reserved app subset:
- * - Normal users, ids [0, numOfNormalUsers): always empty in this tutorial.
+ * - Normal users, ids [0, numOfNormalUsers): pick from every application NOT
+ *   listed in {@code sar_application_names} (MustPartitionTask, in this tutorial).
  * - SAR members, ids [numOfNormalUsers, numberOfMobileDevices): pick only
- *   from {@code sar_application_names} (LLM_INFERENCE), starting at
- *   {@code sarEntryTime} (0 in this tutorial - they are the only population).
+ *   from {@code sar_application_names}, and only start generating tasks after
+ *   {@code sarEntryTime} - unused in this tutorial, since numOfSarMembers is always 0
+ *   (see default_config.properties, which never sets sar_member_percentage).
  *
  * Usage percentages in applications.xml are normalized independently within
  * each population's own app subset, not globally across all apps.
@@ -51,18 +51,13 @@ public class SARAwareLoadGenerator extends LoadGeneratorModel {
         double[][] taskLookUpTable = SimSettings.getInstance().getTaskLookUpTable();
         Set<String> sarAppNames = new HashSet<>(Arrays.asList(SimSettings.getInstance().getSarApplicationNames()));
 
-        // ONAT: wraps the shared, seedable SimUtils.RNG instead of each ExponentialDistribution
-        // creating its own independently/freshly-seeded generator - see MainApp's per-iteration
-        // SimUtils.RNG.setSeed(), which this is what actually makes task generation reproducible.
-        RandomGenerator rng = RandomGeneratorFactory.createRandomGenerator(SimUtils.RNG);
-
         ExponentialDistribution[][] expRngList = new ExponentialDistribution[taskLookUpTable.length][3];
         for (int i = 0; i < taskLookUpTable.length; i++) {
             if (taskLookUpTable[i][0] == 0)
                 continue;
-            expRngList[i][0] = new ExponentialDistribution(rng, taskLookUpTable[i][5]);
-            expRngList[i][1] = new ExponentialDistribution(rng, taskLookUpTable[i][6]);
-            expRngList[i][2] = new ExponentialDistribution(rng, taskLookUpTable[i][7]);
+            expRngList[i][0] = new ExponentialDistribution(taskLookUpTable[i][5]);
+            expRngList[i][1] = new ExponentialDistribution(taskLookUpTable[i][6]);
+            expRngList[i][2] = new ExponentialDistribution(taskLookUpTable[i][7]);
         }
 
         int[] normalAppIndices = collectAppIndices(taskLookUpTable, sarAppNames, false);
@@ -70,11 +65,11 @@ public class SARAwareLoadGenerator extends LoadGeneratorModel {
 
         // Normal users start immediately, like the plain IdleActiveLoadGenerator
         for (int i = 0; i < numOfNormalUsers; i++)
-            generateTasksForDevice(i, normalAppIndices, taskLookUpTable, expRngList, SimSettings.CLIENT_ACTIVITY_START_TIME, rng);
+            generateTasksForDevice(i, normalAppIndices, taskLookUpTable, expRngList, SimSettings.CLIENT_ACTIVITY_START_TIME);
 
         // SAR members only start generating tasks once they enter the scenario
         for (int i = numOfNormalUsers; i < numberOfMobileDevices; i++)
-            generateTasksForDevice(i, sarAppIndices, taskLookUpTable, expRngList, sarEntryTime, rng);
+            generateTasksForDevice(i, sarAppIndices, taskLookUpTable, expRngList, sarEntryTime);
     }
 
     /** Collects app indices belonging to the SAR group (or, if !sarGroup, everything else). */
@@ -94,8 +89,7 @@ public class SARAwareLoadGenerator extends LoadGeneratorModel {
     }
 
     private void generateTasksForDevice(int deviceId, int[] candidateAppIndices, double[][] taskLookUpTable,
-                                         ExponentialDistribution[][] expRngList, double earliestStartTime,
-                                         RandomGenerator rng) {
+                                         ExponentialDistribution[][] expRngList, double earliestStartTime) {
         if (candidateAppIndices.length == 0) {
             SimLogger.printLine("Critical Error: No application is reserved for device " + deviceId + "!");
             return;
@@ -111,10 +105,10 @@ public class SARAwareLoadGenerator extends LoadGeneratorModel {
         double activePeriodStartTime = SimUtils.getRandomDoubleNumber(earliestStartTime, earliestStartTime + activePeriod);
         double virtualTime = activePeriodStartTime;
 
-        ExponentialDistribution interarrivalDistribution = new ExponentialDistribution(rng, poissonMean);
+        ExponentialDistribution rng = new ExponentialDistribution(poissonMean);
 
         while (virtualTime < simulationTime) {
-            double interval = interarrivalDistribution.sample();
+            double interval = rng.sample();
             if (interval <= 0)
                 continue;
 
