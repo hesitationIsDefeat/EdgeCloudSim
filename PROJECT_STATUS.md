@@ -225,10 +225,12 @@ abstract base classes.
    entry numeric knob without a new Java class per value.
 
 ### 6.3 New task-partitioning policy/strategy
-Current state (important gotcha): `task_partition_policies` in `.properties` is only a
+Current state (important gotcha): `task_partition_policies` in `.properties` is mostly a
 **binary NO / not-NO switch** — `SimSettings.isTaskPartitionable(taskType)` returns
-`false` for policy `"NO"` and otherwise just returns the per-app `partitionable` flag from
-`applications.xml`, regardless of the policy's actual name. Similarly, `partition_strategy`
+`false` for policy `"NO"`, `true` if a partition-count override is active (see
+`setPartitionCountOverride`/tutorial14's `PARTITION_<N>` policies, which force
+partitioning regardless of `applications.xml`), and otherwise just returns the per-app
+`partitionable` flag from `applications.xml`. Similarly, `partition_strategy`
 is parsed and stored (`SimSettings.getTaskPartitionStrategy`) but **not read by
 anything** — `DefaultMobileDeviceManager.splitTaskProperty` always does an equal split.
 To add a *real* new strategy:
@@ -236,10 +238,9 @@ To add a *real* new strategy:
    splitTaskProperty(...)` builds `lengthParts`/`uploadParts`/`downloadParts` — branch on
    `SimSettings.getInstance().getTaskPartitionStrategy(taskType)` instead of always
    calling the equal-split `splitValue(...)`.
-2. If the policy should affect *how many* children or *whether* a task partitions (not
-   just how work is divided), extend `SimSettings.getTaskPartitionPolicy()`/
-   `isTaskPartitionable`/`getTaskPartitionCount` to branch on the current policy string,
-   not just check `"NO"`.
+2. If the policy should affect *how many* children (not just how work is divided),
+   extend `SimSettings.getTaskPartitionPolicy()`/`getTaskPartitionCount` to branch on the
+   current policy string further (see tutorial14's `PARTITION_<N>` naming convention).
 3. If sibling sub-tasks need coordinated placement, that's already supported via
    `EdgeOrchestrator.getVmsToOffload(List<Task>, deviceId)` — override it (see
    `UAVEdgeOrchestrator`) rather than re-deriving batch-aware placement.
