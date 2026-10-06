@@ -1,10 +1,12 @@
 import os
+import xml.etree.ElementTree as ET
 
 # ONAT: single source of truth is default_config.properties's uav_mobility_options -
 # scenario_types/legends/colors/markers below are all derived from it, so adding a new
 # centralized policy there is enough; no python changes needed.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
+_APPLICATIONS_XML_PATH = os.path.join(_CONFIG_DIR, 'applications.xml')
 _ROOT_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
 _TUTORIAL_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'tutorial_names.properties')
 
@@ -57,6 +59,24 @@ def _get_orchestrator_policy(properties_path):
     return value.split(',')[0].strip()
 
 
+def _get_application_names(applications_xml_path):
+    """
+    Reads every <application name="..."> from applications.xml, in document order - this
+    must match the app-type segment SimLogger embeds in every per-app *_GENERIC.log file
+    name, so plotting scripts never hardcode a stale/incomplete application list.
+    """
+    root = ET.parse(applications_xml_path).getroot()
+    names = [app.get('name') for app in root.findall('application')]
+    if not names:
+        raise ValueError(f"No <application> found in {applications_xml_path}")
+    return names
+
+
+def _make_app_label(app_name):
+    """Turns 'DISASTER_MAP_FUSION' into 'Disaster Map Fusion' for plot labels."""
+    return app_name.replace('_', ' ').title()
+
+
 def compute_num_sar_members(num_normal_users):
     """
     Mirrors SimSettings.computeNumOfSarMembers() (Java): SAR member count is a
@@ -95,10 +115,13 @@ def get_configuration():
     scenario_types = _parse_uav_mobility_options(_PROPERTIES_PATH)
     legends = [_LEGEND_OVERRIDES.get(s, s) for s in scenario_types]
     num_scenarios = len(scenario_types)
+    application_names = _get_application_names(_APPLICATIONS_XML_PATH)
 
     config = {
         'folder_path': '../../../sim_results/tutorial8',
         'orchestrator_policy': _get_orchestrator_policy(_PROPERTIES_PATH),
+        'application_names': application_names,
+        'application_labels': [_make_app_label(name) for name in application_names],
         'output_folder_path': os.path.join(
             os.environ.get('PLOT_RUN_DIR', '../../../sim_results/tutorial8'),
             _load_tutorial_display_name('tutorial8')),

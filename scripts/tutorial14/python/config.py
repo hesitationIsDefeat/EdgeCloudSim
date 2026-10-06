@@ -1,5 +1,6 @@
 import os
 import re
+import xml.etree.ElementTree as ET
 
 # ONAT: single source of truth is default_config.properties's task_partition_policies -
 # scenario_types/legends/colors/markers below are all derived from it, so adding a new
@@ -7,6 +8,7 @@ import re
 # to a single KMEANS (PRIORITY_KMEANS) variant - see MainApp.java.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
+_APPLICATIONS_XML_PATH = os.path.join(_CONFIG_DIR, 'applications.xml')
 _ROOT_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
 _TUTORIAL_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'tutorial_names.properties')
 
@@ -41,6 +43,19 @@ def _parse_property(properties_path, key):
             if line.startswith(f'{key}='):
                 return line.split('=', 1)[1].strip()
     return None
+
+
+def _get_application_name(applications_xml_path):
+    """
+    Reads the (single) <application name="..."> from applications.xml - this must match
+    the app-type segment SimLogger embeds in every per-app *_GENERIC.log file name, so
+    plotting scripts never hardcode a stale application name.
+    """
+    root = ET.parse(applications_xml_path).getroot()
+    applications = root.findall('application')
+    if not applications:
+        raise ValueError(f"No <application> found in {applications_xml_path}")
+    return applications[0].get('name')
 
 
 def _get_orchestrator_policy(properties_path):
@@ -95,6 +110,7 @@ def get_configuration():
     config = {
         'folder_path': '../../../sim_results/tutorial14',
         'orchestrator_policy': _get_orchestrator_policy(_PROPERTIES_PATH),
+        'application_name': _get_application_name(_APPLICATIONS_XML_PATH),
         'output_folder_path': os.path.join(
             os.environ.get('PLOT_RUN_DIR', '../../../sim_results/tutorial14'),
             _load_tutorial_display_name('tutorial14')),
