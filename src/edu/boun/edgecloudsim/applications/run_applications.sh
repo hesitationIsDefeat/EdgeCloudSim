@@ -2,7 +2,7 @@
 # Compiles and runs MainApp (with default args) for the listed tutorial numbers, one after another.
 # Edit TUTORIALS below to choose which tutorials to run.
 
-TUTORIALS=(8 9 10 11 12)
+TUTORIALS=(14)
 
 script_root_path="$(dirname "$(readlink -f "$0")")"
 repo_root="$(readlink -f "${script_root_path}/../../../../..")"
