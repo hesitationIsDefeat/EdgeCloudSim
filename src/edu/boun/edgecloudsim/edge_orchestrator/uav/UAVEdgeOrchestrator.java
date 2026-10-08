@@ -8,7 +8,9 @@ import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.utils.Location;
+import org.cloudbus.cloudsim.ResCloudlet;
 import org.cloudbus.cloudsim.Vm;
+import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.SimEvent;
 import edu.boun.edgecloudsim.utils.SimUtils;
 
@@ -55,8 +57,11 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
             // ONAT: TODO: Check for energy
 
 
-            // ONAT: Include load already reserved for sibling sub-tasks in this batch
-            double uavLoad = uav.getCurrentLoad() + reservedLoad.getOrDefault(uav, 0.0);
+            // ONAT: getCurrentLoad() only reflects the single cloudlet CloudletSchedulerSpaceShared
+            // is actively executing (getTotalUtilizationOfCpu sums the exec list only) - add the
+            // declared share of everything still sitting in the waiting list so a UAV with a deep
+            // backlog isn't mistaken for idle just because its one running task has a small share.
+            double uavLoad = uav.getCurrentLoad() + getWaitingListLoad(uavVm) + reservedLoad.getOrDefault(uav, 0.0);
             // ONAT: Check if the requested load fits into the UAV
             double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uavVm.getVmType());
             if (uavLoad + taskLoad > 100.0) continue;
@@ -70,6 +75,16 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
         }
 
         return selectedUAV;
+    }
+
+    // ONAT: Sums the declared CPU share of cloudlets queued behind the single executing
+    // one, since CloudletSchedulerSpaceShared.getTotalUtilizationOfCpu() is blind to them.
+    private double getWaitingListLoad(EdgeVM vm) {
+        double waitingLoad = 0.0;
+        for (ResCloudlet rcl : vm.getCloudletScheduler().<ResCloudlet>getCloudletWaitingList()) {
+            waitingLoad += rcl.getCloudlet().getUtilizationOfCpu(CloudSim.clock());
+        }
+        return waitingLoad;
     }
 
     @Override
