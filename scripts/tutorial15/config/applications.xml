@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<applications>
+	<!-- ONAT: DAG (Directed Acyclic Graph) task - a partitionable task whose sub-tasks
+	     are organized into dependent LAYERS instead of one flat, mutually-independent
+	     batch. dag_layers is a comma list of how many parallel sub-tasks each layer
+	     contains, in dependency order: layer L only starts once every sub-task in
+	     layer L-1 has finished (a "simple" DAG - no cross-layer dependencies further
+	     back than one layer). Here 1,3,2,1 means: 1 entry sub-task -> fans out into 3
+	     parallel sub-tasks -> merges into 2 parallel sub-tasks -> 1 final sub-task.
+	     partition_count/partitionable are implied by dag_layers (its sum / true) and
+	     are not read for a DAG app - see SimSettings.parseApplicationsXML. vm_utilization_
+	     on_edge (100%) is sized so a single unpartitioned task (task_partition_policies=NO)
+	     needs a whole edge VM to itself - any contention with another device's task on the
+	     same VM makes it fail, while the DAG split (task_partition_policies=FULL, divides
+	     the 100% by the 7 total sub-tasks) comfortably fits. -->
+	<application name="DAG_WORKFLOW">
+		<usage_percentage>100</usage_percentage>
+		<dag_layers>1,3,2,1</dag_layers>
+		<partition_strategy>EQUAL</partition_strategy>
+		<prob_cloud_selection>5</prob_cloud_selection>
+		<!-- ONAT: each user sends one request every 2 minutes on average. -->
+		<poisson_interarrival>120</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>15</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>20000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>100</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>
