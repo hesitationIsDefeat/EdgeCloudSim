@@ -171,6 +171,15 @@ public class SimSettings {
 	private int[] taskPartitionCount = null;
 	private String[] taskPartitionStrategy = null;
 
+	/** ONAT: whether an application's partition structure is a DAG (layered, with
+	 * inter-layer dependencies) instead of a flat/independent partition batch. */
+	private boolean[] taskDagEnabled = null;
+	/** ONAT: per-task-type DAG layer sizes, in dependency order - taskDagLayers[i][L]
+	 * is the number of parallel sub-tasks in layer L of task type i's DAG; layer L only
+	 * starts once every sub-task in layer L-1 has completed. null when taskDagEnabled[i]
+	 * is false. */
+	private int[][] taskDagLayers = null;
+
     /** ONAT:
      * Event tag for edge server movement. */
     public static final int EDGE_SERVER_MOVE = 9001;
@@ -841,6 +850,22 @@ public class SimSettings {
 		return taskPartitionStrategy[taskType];
 	}
 
+	/** ONAT: true if this task type's partition structure is a DAG (layered, with
+	 * inter-layer dependencies) rather than a flat/independent partition batch. A DAG
+	 * task is always partitionable (see parseApplicationsXML), so this is only
+	 * meaningful when isTaskPartitionable(taskType) is also true. */
+	public boolean isTaskDag(int taskType)
+	{
+		return taskDagEnabled[taskType];
+	}
+
+	/** ONAT: per-layer parallel sub-task counts for this task type's DAG, in dependency
+	 * order (layer 0 first). Only valid when isTaskDag(taskType) is true. */
+	public int[] getTaskDagLayers(int taskType)
+	{
+		return taskDagLayers[taskType];
+	}
+
 	/**
 	 * Validates that a required attribute exists in an XML element.
 	 * Throws exception if the attribute is missing or empty.
@@ -925,6 +950,8 @@ public class SimSettings {
 			taskPartitionable = new boolean[appList.getLength()];
 			taskPartitionCount = new int[appList.getLength()];
 			taskPartitionStrategy = new String[appList.getLength()];
+			taskDagEnabled = new boolean[appList.getLength()];
+			taskDagLayers = new int[appList.getLength()][];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
 
@@ -935,18 +962,40 @@ public class SimSettings {
 				taskPartitionable[i] = false;
 				taskPartitionCount[i] = 1;
 				taskPartitionStrategy[i] = "EQUAL";
+				taskDagEnabled[i] = false;
+				taskDagLayers[i] = null;
 				if(checkElement(appElement, "partitionable"))
 					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
 				if(checkElement(appElement, "partition_count"))
 					taskPartitionCount[i] = Math.max(1, Integer.parseInt(appElement.getElementsByTagName("partition_count").item(0).getTextContent()));
 				if(checkElement(appElement, "partition_strategy"))
 					taskPartitionStrategy[i] = appElement.getElementsByTagName("partition_strategy").item(0).getTextContent();
+				// ONAT: dag_layers (e.g. "1,3,2,1") marks this app as a DAG task - a
+				// partitionable task whose children are grouped into dependent layers
+				// instead of one flat independent batch. It implies partitionable=true
+				// and overrides partition_count with the sum of every layer's size,
+				// regardless of what those tags say (so an app can supply either style,
+				// not both, without conflicting).
+				if(checkElement(appElement, "dag_layers")) {
+					String[] layerTokens = appElement.getElementsByTagName("dag_layers").item(0).getTextContent().split(",");
+					int[] layers = new int[layerTokens.length];
+					int totalSubtaskCount = 0;
+					for(int d=0; d<layerTokens.length; d++) {
+						layers[d] = Math.max(1, Integer.parseInt(layerTokens[d].trim()));
+						totalSubtaskCount += layers[d];
+					}
+					taskDagEnabled[i] = true;
+					taskDagLayers[i] = layers;
+					taskPartitionable[i] = true;
+					taskPartitionCount[i] = totalSubtaskCount;
+				}
 
 				for(int m=0; m<mandatoryAttributes.length; m++){
 					isElementPresent(appElement, mandatoryAttributes[m]);
 					taskLookUpTable[i][m] = Double.parseDouble(appElement.
 							getElementsByTagName(mandatoryAttributes[m]).item(0).getTextContent());
 				}
+
 
 				for(int o=0; o<optionalAttributes.length; o++){
 					double value = 0;
