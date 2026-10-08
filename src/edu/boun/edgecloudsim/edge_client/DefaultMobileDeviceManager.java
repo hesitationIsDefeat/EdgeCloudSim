@@ -15,7 +15,9 @@
 
 package edu.boun.edgecloudsim.edge_client;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,16 +78,29 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 
 	private static class PartitionState {
 		private final int parentTaskId;
-		private final int totalChildren;
+		// Not final: for a DAG task this is reset to the CURRENT layer's size each time
+		// a new layer is submitted (see submitChildTaskBatch) rather than the total
+		// sub-task count across the whole DAG.
+		private int totalChildren;
 		private int completedChildren;
 		private boolean failed;
-		// Accumulates the upload/download delay of every child so the parent's
-		// own log entry (which is what feeds the network delay statistics)
-		// reflects the network cost actually incurred by its sub-tasks - the
+		// Accumulates the upload/download delay of every child (every layer, for a DAG
+		// task) so the parent's own log entry (which is what feeds the network delay
+		// statistics) reflects the network cost actually incurred by its sub-tasks - the
 		// parent itself is never bound to a VM/Cloudlet and never uploads or
 		// downloads anything on its own.
 		private double uploadDelaySum;
 		private double downloadDelaySum;
+		// DAG-specific bookkeeping (unused/false-null for a flat partitioned task):
+		// isDag marks that completedChildren/totalChildren track only the currently
+		// running layer, totalDagChildCount is the sub-task count across EVERY layer
+		// (used for CPU-utilization-share purposes, see buildChildTasks), and
+		// remainingLayers holds every layer not yet submitted - consumed one at a time
+		// as each running layer finishes, so a layer never starts before every
+		// sub-task in the previous layer has completed.
+		private boolean isDag;
+		private int totalDagChildCount;
+		private Deque<List<TaskProperty>> remainingLayers;
 
 		private PartitionState(int parentTaskId, int totalChildren) {
 			this.parentTaskId = parentTaskId;
@@ -94,6 +109,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			this.failed = false;
 			this.uploadDelaySum = 0;
 			this.downloadDelaySum = 0;
+			this.isDag = false;
+			this.totalDagChildCount = totalChildren;
+			this.remainingLayers = null;
 		}
 	}
 	
@@ -281,13 +299,23 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 					}
 					partitionState.completedChildren++;
 					if (partitionState.completedChildren >= partitionState.totalChildren) {
-						// Roll up every child's upload/download delay into the parent's
-						// own log entry before marking it complete, since the parent
-						// never uploads/downloads anything itself.
-						SimLogger.getInstance().setUploadDelay(partitionState.parentTaskId, partitionState.uploadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
-						SimLogger.getInstance().setDownloadDelay(partitionState.parentTaskId, partitionState.downloadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
-						SimLogger.getInstance().taskEnded(partitionState.parentTaskId, CloudSim.clock());
-						partitionStateMap.remove(partitionState.parentTaskId);
+						if (partitionState.isDag && !partitionState.remainingLayers.isEmpty()) {
+							// Every sub-task in the current DAG layer just finished -
+							// only now (not before) may the next layer's sub-tasks be
+							// submitted, since they depend on this layer's completion.
+							List<Task> nextLayerTasks = buildChildTasks(partitionState.parentTaskId,
+									partitionState.remainingLayers.poll(), partitionState.totalDagChildCount);
+							submitChildTaskBatch(partitionState.parentTaskId, partitionState, nextLayerTasks, networkModel);
+						}
+						else {
+							// Roll up every child's upload/download delay into the parent's
+							// own log entry before marking it complete, since the parent
+							// never uploads/downloads anything itself.
+							SimLogger.getInstance().setUploadDelay(partitionState.parentTaskId, partitionState.uploadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
+							SimLogger.getInstance().setDownloadDelay(partitionState.parentTaskId, partitionState.downloadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
+							SimLogger.getInstance().taskEnded(partitionState.parentTaskId, CloudSim.clock());
+							partitionStateMap.remove(partitionState.parentTaskId);
+						}
 					}
 					break;
 				}
@@ -312,7 +340,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	public void submitTask(TaskProperty edgeTask) {
 		NetworkModel networkModel = SimManager.getInstance().getNetworkModel();
 		if (edgeTask.isPartitionable()) {
-			submitPartitionableTask(edgeTask, networkModel);
+			if (SimSettings.getInstance().isTaskDag(edgeTask.getTaskType()))
+				submitDagTask(edgeTask, networkModel);
+			else
+				submitPartitionableTask(edgeTask, networkModel);
 			return;
 		}
 		
@@ -392,23 +423,79 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
 		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
 
-		PartitionState partitionState = new PartitionState(parentTaskId, edgeTask.getPartitionCount());
+		List<TaskProperty> childProperties = splitTaskProperty(edgeTask);
+		PartitionState partitionState = new PartitionState(parentTaskId, childProperties.size());
 		partitionStateMap.put(parentTaskId, partitionState);
 
-		List<TaskProperty> childProperties = splitTaskProperty(edgeTask);
+		List<Task> childTasks = buildChildTasks(parentTaskId, childProperties, childProperties.size());
+		submitChildTaskBatch(parentTaskId, partitionState, childTasks, networkModel);
+	}
+
+	/**
+	 * Submits a DAG (Directed Acyclic Graph) task: a partitionable task whose
+	 * sub-tasks are grouped into dependent LAYERS instead of one flat, mutually
+	 * independent batch. Only the first layer is submitted here - every later layer
+	 * is submitted from processOtherEvent's RESPONSE_RECEIVED_BY_MOBILE_DEVICE case,
+	 * once every sub-task in the previous layer has completed (see PartitionState's
+	 * remainingLayers/isDag fields).
+	 */
+	private void submitDagTask(TaskProperty edgeTask, NetworkModel networkModel) {
+		int parentTaskId = ++taskIdCounter;
+		SimLogger.getInstance().addLog(edgeTask.getMobileDeviceId(), parentTaskId, SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
+		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
+		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+
+		Deque<List<TaskProperty>> dagLayers = splitTaskPropertyIntoDagLayers(edgeTask);
+		int totalDagChildCount = 0;
+		for (List<TaskProperty> layer : dagLayers) {
+			totalDagChildCount += layer.size();
+		}
+
+		List<TaskProperty> firstLayer = dagLayers.poll();
+		PartitionState partitionState = new PartitionState(parentTaskId, firstLayer.size());
+		partitionState.isDag = true;
+		partitionState.totalDagChildCount = totalDagChildCount;
+		partitionState.remainingLayers = dagLayers;
+		partitionStateMap.put(parentTaskId, partitionState);
+
+		List<Task> childTasks = buildChildTasks(parentTaskId, firstLayer, totalDagChildCount);
+		submitChildTaskBatch(parentTaskId, partitionState, childTasks, networkModel);
+	}
+
+	/**
+	 * Creates child Task instances (with partition bookkeeping set) from a batch of
+	 * sub-task properties - one call per flat partition batch, or per DAG layer.
+	 *
+	 * @param totalChildCount total sibling count used for CPU-utilization-share
+	 *        purposes (see CpuUtilizationModel_Custom) - the full partition batch
+	 *        size for a flat task, or the sum across every DAG layer for a DAG task.
+	 */
+	private List<Task> buildChildTasks(int parentTaskId, List<TaskProperty> childProperties, int totalChildCount) {
 		List<Task> childTasks = new ArrayList<Task>(childProperties.size());
 		for (int i = 0; i < childProperties.size(); i++) {
 			Task childTask = createTask(childProperties.get(i));
 			childTask.setPartitionChild(true);
 			childTask.setParentTaskId(parentTaskId);
 			childTask.setChildIndex(i);
-			childTask.setChildCount(childProperties.size());
+			childTask.setChildCount(totalChildCount);
 
 			Location currentLocation = SimManager.getInstance().getMobilityModel().getLocation(childTask.getMobileDeviceId(), CloudSim.clock());
 			childTask.setSubmittedLocation(currentLocation);
 
 			childTasks.add(childTask);
 		}
+		return childTasks;
+	}
+
+	/**
+	 * Selects VMs for and starts the upload of a whole sibling batch (a flat
+	 * partition's only batch, or one DAG layer) - shared by submitPartitionableTask,
+	 * submitDagTask (first layer), and the RESPONSE_RECEIVED_BY_MOBILE_DEVICE layer
+	 * hand-off (later layers).
+	 */
+	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, NetworkModel networkModel) {
+		partitionState.completedChildren = 0;
+		partitionState.totalChildren = childTasks.size();
 
 		// Select the target VM/UAV for every sibling sub-task at the same time so
 		// the orchestrator can account for the cumulative load the whole batch
@@ -437,7 +524,8 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			}
 
 			// Track this child's upload delay so it can be rolled up into the
-			// parent's log entry once every sibling has finished.
+			// parent's log entry once every sibling (every layer, for a DAG task)
+			// has finished.
 			partitionState.uploadDelaySum += wlanDelay;
 
 			networkModel.uploadStarted(childTask.getSubmittedLocation(), selectedVM.getHost().getId());
@@ -458,6 +546,36 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		}
 
 		return childProperties;
+	}
+
+	/**
+	 * Splits a DAG task's total length/upload/download evenly across every sub-task
+	 * in every layer (the same EQUAL-split convention splitTaskProperty uses for flat
+	 * partitions), then groups them back into per-layer lists in dependency order.
+	 */
+	private Deque<List<TaskProperty>> splitTaskPropertyIntoDagLayers(TaskProperty edgeTask) {
+		int[] layerSizes = SimSettings.getInstance().getTaskDagLayers(edgeTask.getTaskType());
+		int totalChildCount = 0;
+		for (int layerSize : layerSizes) {
+			totalChildCount += layerSize;
+		}
+
+		long[] lengthParts = splitValue(edgeTask.getLength(), totalChildCount);
+		long[] uploadParts = splitValue(edgeTask.getInputFileSize(), totalChildCount);
+		long[] downloadParts = splitValue(edgeTask.getOutputFileSize(), totalChildCount);
+
+		Deque<List<TaskProperty>> dagLayers = new ArrayDeque<List<TaskProperty>>(layerSizes.length);
+		int childIndex = 0;
+		for (int layerSize : layerSizes) {
+			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
+			for (int i = 0; i < layerSize; i++) {
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
+				childIndex++;
+			}
+			dagLayers.add(layerProperties);
+		}
+
+		return dagLayers;
 	}
 
 	private long[] splitValue(long total, int parts) {
