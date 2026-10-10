@@ -28,9 +28,12 @@
 // DAG_WORKFLOW (a DAG-structured partitionable task - see applications.xml's dag_layers).
 // UAV mobility is FIXED to a single KMEANS variant (bare PRIORITY_KMEANS, see
 // uav_mobility_options - only one entry, taken once below, not swept); this tutorial
-// instead sweeps task_partition_policies=NO,FULL to compare running DAG_WORKFLOW as one
-// flat unpartitioned task ("NO") against the real layered DAG ("FULL") - see
-// SimSettings.isTaskDag/isTaskPartitionable and DefaultMobileDeviceManager.submitDagTask.
+// instead sweeps task_partition_policies to compare running DAG_WORKFLOW as: one flat
+// unpartitioned task ("NO"), the real layered DAG ("FULL"), and a flat N-way split with
+// no inter-layer dependencies ("PARTITION_<N>", tutorial14-style - see
+// PARTITION_POLICY_PATTERN below and SimSettings.setPartitionCountOverride()/
+// isPartitionCountOverrideActive()) - see also DefaultMobileDeviceManager.submitTask's
+// DAG-vs-flat dispatch and SimSettings.isTaskDag/isTaskPartitionable.
 
 package edu.boun.edgecloudsim.applications.tutorial15;
 
@@ -39,6 +42,8 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.CloudSim;
@@ -53,6 +58,12 @@ public class MainApp {
 
     public static final int EXPECTED_NUM_OF_ARGS = 5;
     public static final String APPLICATION_FOLDER = "tutorial15";
+
+    // ONAT: a "PARTITION_<N>" entry in task_partition_policies forces DAG_WORKFLOW into
+    // N flat, independent children for that run (ignoring dag_layers entirely) - see
+    // SimSettings.setPartitionCountOverride(). NO/FULL (no trailing _<N>) clear the
+    // override instead, so they keep their original NO/FULL behavior.
+    private static final Pattern PARTITION_POLICY_PATTERN = Pattern.compile("PARTITION_(\\d+)");
 
     /**
      * Creates main() to run this example
@@ -169,6 +180,12 @@ public class MainApp {
                             String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
                             String taskPartitionPolicy = SS.getTaskPartitionPolicies()[p].trim().toUpperCase();
                             SS.setTaskPartitionPolicy(taskPartitionPolicy);
+
+                            // ONAT: only "PARTITION_<N>" entries set a child-count override;
+                            // NO/FULL clear it so they're unaffected by a previous iteration's override.
+                            Matcher partitionPolicyMatcher = PARTITION_POLICY_PATTERN.matcher(taskPartitionPolicy);
+                            SS.setPartitionCountOverride(partitionPolicyMatcher.matches() ?
+                                    Integer.parseInt(partitionPolicyMatcher.group(1)) : -1);
 
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);
