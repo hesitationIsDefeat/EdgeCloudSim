@@ -1,9 +1,11 @@
 import os
+import re
 import xml.etree.ElementTree as ET
 
 # ONAT: single source of truth is default_config.properties's task_partition_policies
-# (NO vs FULL) - scenario_types/legends/colors/markers below are all derived from it.
-# UAV mobility is fixed to a single KMEANS (PRIORITY_KMEANS) variant - see MainApp.java.
+# (NO / FULL / PARTITION_<N>) - scenario_types/legends/colors/markers below are all
+# derived from it. UAV mobility is fixed to a single KMEANS (PRIORITY_KMEANS) variant -
+# see MainApp.java.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
 _APPLICATIONS_XML_PATH = os.path.join(_CONFIG_DIR, 'applications.xml')
@@ -69,11 +71,22 @@ def _get_orchestrator_policy(properties_path):
 
 
 _LEGEND_NAMES = {'NO': 'Not Partitioned', 'FULL': 'DAG Partitioned'}
+_PARTITION_POLICY_PATTERN = re.compile(r'PARTITION_(\d+)')
 
 
 def _make_legend(scenario_type):
-    """Turns 'NO'/'FULL' into 'Not Partitioned'/'DAG Partitioned'."""
-    return _LEGEND_NAMES.get(scenario_type, scenario_type)
+    """Turns 'NO'/'FULL' into 'Not Partitioned'/'DAG Partitioned', and
+    'PARTITION_4'/'PARTITION_7' into '4 Partitions (Flat)'/'7 Partitions (Flat)' -
+    the "(Flat)" suffix distinguishes these from FULL's dependent-layer split, since
+    both can have the same child count (e.g. PARTITION_7) yet differ in whether
+    children are submitted all at once or in dependent waves."""
+    if scenario_type in _LEGEND_NAMES:
+        return _LEGEND_NAMES[scenario_type]
+    match = _PARTITION_POLICY_PATTERN.match(scenario_type)
+    if not match:
+        return scenario_type
+    count = int(match.group(1))
+    return f'{count} Partition (Flat)' if count == 1 else f'{count} Partitions (Flat)'
 
 
 def _load_tutorial_display_name(tutorial_key):
