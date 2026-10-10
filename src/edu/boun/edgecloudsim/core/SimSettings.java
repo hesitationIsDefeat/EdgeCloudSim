@@ -738,7 +738,15 @@ public class SimSettings {
 		currentPartitionCountOverride = partitionCount;
 	}
 
-
+	/** ONAT: true if a PARTITION_<N> policy is forcing a specific child count this run
+	 * (see setPartitionCountOverride()). Used by DefaultMobileDeviceManager to force a
+	 * DAG task into a flat N-way split (bypassing its dag_layers structure entirely) so
+	 * a layered DAG run ("FULL") can be compared against a flat baseline of the same
+	 * (or a different) child count, not just NO/FULL. */
+	public boolean isPartitionCountOverrideActive()
+	{
+		return currentPartitionCountOverride > 0;
+	}
 
 	public double getNorthernBound() {
 		return NORTHERN_BOUND;
