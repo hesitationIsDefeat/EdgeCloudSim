@@ -13,7 +13,11 @@ CloudSim) extended with:
   `edge_server/uav`, `edge_orchestrator/uav`, `network/uav`).
 - **Task partitioning**: a task can be split into N sub-tasks ("children") offloaded
   together, with results re-aggregated (`edge_client/DefaultMobileDeviceManager`,
-  `edge_client/Task`, `utils/TaskProperty`, `core/SimSettings`).
+  `edge_client/Task`, `utils/TaskProperty`, `core/SimSettings`). A partitioned task can
+  also be a **DAG** (tutorial15+): sub-tasks are grouped into dependent LAYERS
+  (`applications.xml`'s `dag_layers`) instead of one flat independent batch - layer L
+  only starts once every sub-task in layer L-1 has completed, while sub-tasks within the
+  same layer run in parallel. See §6.3b.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -114,7 +118,7 @@ flowchart TB
 | Class | Role |
 |---|---|
 | `MobileDeviceManager` (abstract, extends CloudSim `DatacenterBroker`) | `submitTask(TaskProperty)` is the entry point every task passes through; `getCpuUtilizationModel()`. |
-| `DefaultMobileDeviceManager` | The real task lifecycle state machine: upload → (optional) execution on assigned VM → download → logging, PLUS **task partitioning**: `submitTask` branches on `TaskProperty.isPartitionable()` into `submitPartitionableTask(...)`, which creates a `parentTaskId`, splits the task into N children via `splitTaskProperty` (currently **always an equal split** — see §7 gotchas), calls `EdgeOrchestrator.getVmsToOffload` once for the whole sibling batch, and tracks completion/failure of the whole batch in an internal `PartitionState` (upload/download delay sums, `completedChildren`/`totalChildren`, `failed` flag) so the **parent** task gets exactly one aggregated log entry (see `SimLogger.taskEnded`). Any partial sibling failure fails the whole partition (`failPartition(...)`). |
+| `DefaultMobileDeviceManager` | The real task lifecycle state machine: upload → (optional) execution on assigned VM → download → logging, PLUS **task partitioning**: `submitTask` branches on `TaskProperty.isPartitionable()`, then on `SimSettings.isTaskDag(taskType)`, into either `submitPartitionableTask(...)` (flat) or `submitDagTask(...)` (layered DAG, tutorial15+ — see §6.3b). Both create a `parentTaskId`, split the task into N children (`splitTaskProperty`/`splitTaskPropertyIntoDagLayers`, currently **always an equal split** — see §7 gotchas), and submit sibling batches (one per layer, for a DAG) via the shared `submitChildTaskBatch` (calls `EdgeOrchestrator.getVmsToOffload` once per batch), tracking completion/failure in an internal `PartitionState` (upload/download delay sums, `completedChildren`/`totalChildren`, `failed` flag, plus `isDag`/`remainingLayers` for the DAG path) so the **parent** task gets exactly one aggregated log entry (see `SimLogger.taskEnded`). Any sibling failure fails the whole partition/DAG (`failPartition(...)`). |
 | `Task` (extends CloudSim `Cloudlet`) | Adds `submittedLocation`, `creationTime`, `type`, `mobileDeviceId`, `hostIndex`/`vmIndex`/`datacenterId`, and partition bookkeeping: `partitionChild`, `parentTaskId`, `childIndex`, `childCount`. |
 | `CpuUtilizationModel_Custom` | Looks up per-app, per-tier (`EDGE_VM`/`CLOUD_VM`/`MOBILE_VM`) CPU utilization from `applications.xml` (`vm_utilization_on_*`) via `SimSettings.getTaskLookUpTable()`; `predictUtilization(vmType)` is what orchestrators call *before* binding a task to estimate fit. |
 | `edge_client/mobile_processing_unit/` (`MobileServerManager`, `DefaultMobileServerManager`, `MobileHost`, `MobileVM`, `MobileVmAllocationPolicy_Custom`) | Same abstract-manager/XML-driven pattern as edge/cloud, but models the **mobile device's own** local processing tier (used when an orchestrator decides to run a task locally instead of offloading). |
@@ -140,6 +144,7 @@ flowchart TB
 | `tutorial7` | Adds **task partitioning** on top of tutorial6 (sweeps `task_partition_policies` in `MainApp`; `applications.xml` apps carry `partitionable`/`partition_count`/`partition_strategy`). |
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
+| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,3,2,1` (1 entry sub-task -> 3 parallel -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG). See §6.3b. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -162,7 +167,10 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   `delay_sensitivity`, `active_period`, `idle_period`, `data_upload`, `data_download`,
   `task_length`, `required_core`; optional: `vm_utilization_on_edge/cloud/mobile`.
   Optional partitioning tags (tutorial7+): `partitionable`, `partition_count`,
-  `partition_strategy` (only `EQUAL` is actually implemented — see §7).
+  `partition_strategy` (only `EQUAL` is actually implemented — see §7). Optional DAG tag
+  (tutorial15+): `dag_layers` (comma list, e.g. `1,3,2,1` — number of parallel sub-tasks
+  per layer, in dependency order); when present it implies `partitionable=true` and
+  overrides `partition_count` with the sum of every layer — see §6.3b.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
@@ -248,6 +256,45 @@ To add a *real* new strategy:
    `default_config.properties` (only meaningful from tutorial7 onward, where `MainApp`
    sweeps this axis and calls `SS.setTaskPartitionPolicy(...)`).
 
+### 6.3b New DAG-structured partitioned task (tutorial15 pattern)
+A DAG task is a partitioned task whose children are grouped into dependent **layers**
+instead of one flat, mutually independent batch: layer L only starts once every sub-task
+in layer L-1 has completed; sub-tasks within the same layer run in parallel (no
+dependencies from 2+ layers back - a "simple" DAG).
+1. **Data/config**: add `<dag_layers>L0,L1,...</dag_layers>` to the app's
+   `applications.xml` block (e.g. `1,3,2,1`) — `SimSettings.parseApplicationsXML` parses
+   it into `taskDagLayers[i]` (per-layer sub-task counts), forces `taskPartitionable[i] =
+   true`, and overrides `taskPartitionCount[i]` with the sum across every layer. Read back
+   via `SimSettings.isTaskDag(taskType)`/`getTaskDagLayers(taskType)`. Do not also set
+   `partitionable`/`partition_count` on a DAG app — `dag_layers` takes precedence.
+2. **Runtime**: `DefaultMobileDeviceManager.submitTask` checks
+   `SimSettings.isTaskDag(taskType)` (only reachable when `isPartitionable()` is also
+   true) and routes to `submitDagTask` instead of `submitPartitionableTask`.
+   `submitDagTask` splits the task's total length/upload/download EQUALLY across every
+   sub-task in every layer (`splitTaskPropertyIntoDagLayers` — same EQUAL-split
+   convention as the flat path's `splitTaskProperty`), then submits only the FIRST
+   layer via the shared `submitChildTaskBatch` helper (VM selection + upload start, also
+   used by the flat path). `PartitionState` gained `isDag`/`totalDagChildCount`/
+   `remainingLayers` fields; every sibling in the running layer still completes through
+   the ordinary per-child upload → execute → download → `RESPONSE_RECEIVED_BY_MOBILE_
+   DEVICE` lifecycle, but that event handler now checks
+   `partitionState.remainingLayers` once the running layer's `completedChildren` reaches
+   `totalChildren` — if non-empty, it pops and submits the next layer (via
+   `buildChildTasks` + `submitChildTaskBatch` again); only once every layer is exhausted
+   does it finalize the parent task (`taskEnded`) exactly like the flat path. A failure in
+   any sub-task (VM capacity/bandwidth/mobility) fails the whole DAG immediately
+   (`failPartition`), same semantics as flat partitioning — there is no partial-DAG
+   success.
+3. `task.getChildCount()` (read by `CpuUtilizationModel_Custom` to divide
+   `vm_utilization_on_*` per sub-task) is set to the DAG's TOTAL sub-task count across
+   every layer for every child, regardless of which layer it's in — so e.g. `dag_layers=
+   1,3,2,1` (7 total) divides the raw utilization by 7 for every sub-task, exactly as a
+   flat 7-way partition would.
+4. `task_partition_policies=NO` still disables partitioning entirely for a DAG app too
+   (`isTaskPartitionable` returns `false` before `isTaskDag` is ever consulted) — the task
+   runs as one big non-partitioned Cloudlet, same NO/not-NO switch as flat partitioning
+   (see §6.3's gotcha).
+
 ### 6.4 New task/application type
 1. Add an `<application name="...">` block to `applications.xml` with the mandatory
    fields (see §5); optionally `partitionable`/`partition_count`/`partition_strategy`.
@@ -327,6 +374,11 @@ shape of the XML itself needs to change.
 - **`task_partition_policies` is a NO/not-NO toggle, not a real policy enum.** Any policy
   name other than `"NO"` currently behaves identically (whatever `applications.xml`'s
   per-app `partitionable` says). See §6.3.
+- **A DAG task's layers share the same unimplemented-`partition_strategy` limitation
+  above**: `splitTaskPropertyIntoDagLayers` always does an EQUAL split of the task's
+  total length/upload/download across every sub-task in every layer — there's no way yet
+  to give e.g. the fan-out layer's sub-tasks a different share than the entry/merge
+  layers'. See §6.3b.
 - **`UAV.isUserInRange` is a square (bounding-box) check**, not a circle, despite being
   named/used alongside `SERVICE_RADIUS`. `UAVEdgeOrchestrator`'s own range check
   (`SimUtils.getEuclideanDistance(...) > SERVICE_RADIUS`) *is* circular — the two range
