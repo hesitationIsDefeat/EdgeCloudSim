@@ -140,15 +140,18 @@ public class BasicUAVMobility extends UAVMobilityModel{
         // set up once in SampleScenarioFactory, so no per-variant branching is needed here.
         if (isVoronoiPolicy(this.uavMobilityOption)) {
             // ONAT: Decentralized centroidal-Voronoi coverage control (Cortes et al.),
-            // but the nearest-UAV partition and each cell's priority-weighted centroid
-            // are no longer recomputed by every UAV - every UAV used to redo that FULL
-            // scan (over every other UAV, over every device) on its own move event, even
-            // though the result only depends on current UAV positions, not on which UAV
-            // is asking. ensureVoronoiPartitionUpToDate() computes it once per distinct
-            // simulation time - whichever UAV's move event gets here first for "now" does
-            // the recompute, every other UAV moving at that same "now" just reads the
-            // already-fresh cache. Overlap/convergence is still structurally prevented by
-            // the partition itself (each device belongs to exactly one UAV's cell).
+            // restricted to each UAV's own SERVICE_RADIUS (a device outside every UAV's
+            // radius is unclaimed, not handed to some arbitrarily distant UAV - see
+            // VoronoiPartitioner.recalculate). The nearest-UAV partition and each cell's
+            // priority-weighted centroid are no longer recomputed by every UAV - every UAV
+            // used to redo that FULL scan (over every other UAV, over every device) on its
+            // own move event, even though the result only depends on current UAV
+            // positions, not on which UAV is asking. ensureVoronoiPartitionUpToDate()
+            // computes it once per distinct simulation time - whichever UAV's move event
+            // gets here first for "now" does the recompute, every other UAV moving at that
+            // same "now" just reads the already-fresh cache. Overlap/convergence is still
+            // structurally prevented by the partition itself (each device belongs to at
+            // most one UAV's cell).
             ensureVoronoiPartitionUpToDate();
             VoronoiPartitioner.Target target = voronoiPartitioner.getTarget(uav);
 

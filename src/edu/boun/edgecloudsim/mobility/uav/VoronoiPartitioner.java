@@ -21,6 +21,16 @@ import java.util.Map;
  * the result, refreshed on demand (see {@link #ensureUpToDate}) by
  * {@link BasicUAVMobility#processMoveEvent} - a UAV's move event just looks up its own
  * already-computed target instead of recomputing anything.
+ * <p>
+ * ONAT: A device can only be claimed by a UAV that can actually sense it, i.e. a UAV
+ * whose current distance to that device is within {@link UAV#SERVICE_RADIUS} - see
+ * {@link #recalculate}. This keeps every UAV's resulting target computable from purely
+ * local information (its own {@code SERVICE_RADIUS} plus the positions of the handful of
+ * other UAVs close enough to possibly contest a cell boundary with it - provably bounded
+ * by {@code 2 * SERVICE_RADIUS} via the triangle inequality), even though this class
+ * computes every UAV's result in one shared pass for performance. It is NOT a real
+ * centralized optimizer: it never lets a UAV's target depend on a device or UAV outside
+ * that bounded neighborhood.
  */
 class VoronoiPartitioner {
     /** ONAT: Centroid a UAV should move toward - plain x/y, not a real place/WLAN cell. */
@@ -57,11 +67,15 @@ class VoronoiPartitioner {
 
             var deviceLoc = mobilityModel.getLocation(deviceId, now);
 
+            // ONAT: Restrict candidate owners to UAVs that can actually sense this device
+            // (within their own SERVICE_RADIUS) - a device outside every UAV's radius is
+            // nobody's responsibility yet and is left unclaimed, rather than being handed
+            // to whichever UAV happens to be globally nearest regardless of distance.
             UAV nearestUav = null;
             double nearestDistance = Double.MAX_VALUE;
             for (UAV uav : uavs) {
                 double distance = SimUtils.getEuclideanDistance(uav.getLocation(), deviceLoc);
-                if (distance < nearestDistance) {
+                if (distance <= UAV.SERVICE_RADIUS && distance < nearestDistance) {
                     nearestDistance = distance;
                     nearestUav = uav;
                 }
