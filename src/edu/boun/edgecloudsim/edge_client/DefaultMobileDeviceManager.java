@@ -340,7 +340,12 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	public void submitTask(TaskProperty edgeTask) {
 		NetworkModel networkModel = SimManager.getInstance().getNetworkModel();
 		if (edgeTask.isPartitionable()) {
-			if (SimSettings.getInstance().isTaskDag(edgeTask.getTaskType()))
+			// ONAT: a PARTITION_<N> override (see SimSettings.setPartitionCountOverride())
+			// forces even a DAG-enabled task into a flat N-way split - its dag_layers are
+			// ignored entirely for that run - so a layered DAG ("FULL") can be compared
+			// against a flat baseline with the same (or any other) child count.
+			if (SimSettings.getInstance().isTaskDag(edgeTask.getTaskType())
+					&& !SimSettings.getInstance().isPartitionCountOverrideActive())
 				submitDagTask(edgeTask, networkModel);
 			else
 				submitPartitionableTask(edgeTask, networkModel);
