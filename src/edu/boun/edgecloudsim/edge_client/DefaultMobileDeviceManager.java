@@ -554,12 +554,24 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	}
 
 	/**
-	 * Splits a DAG task's total length/upload/download evenly across every sub-task
-	 * in every layer (the same EQUAL-split convention splitTaskProperty uses for flat
-	 * partitions), then groups them back into per-layer lists in dependency order.
+	 * Splits a DAG task's total length/upload/download into per-layer lists in
+	 * dependency order, dispatching to one of two strategies (see
+	 * SimSettings.getTaskPartitionStrategy()):
+	 * - "EQUAL" (default): split evenly across every sub-task in every layer (same
+	 *   EQUAL-split convention splitTaskProperty uses for flat partitions), so every
+	 *   sub-task gets an identical share regardless of which layer it's in.
+	 * - DAG_PARTITION_STRATEGY_LAYER_EQUAL: split evenly across every LAYER first,
+	 *   then split each layer's share evenly again across that layer's own
+	 *   sub-tasks - sub-tasks in a smaller layer get a bigger individual share than
+	 *   sub-tasks in a bigger layer.
 	 */
 	private Deque<List<TaskProperty>> splitTaskPropertyIntoDagLayers(TaskProperty edgeTask) {
 		int[] layerSizes = SimSettings.getInstance().getTaskDagLayers(edgeTask.getTaskType());
+
+		if (SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL.equals(
+				SimSettings.getInstance().getTaskPartitionStrategy(edgeTask.getTaskType())))
+			return splitTaskPropertyIntoDagLayersByLayerThenSubtask(edgeTask, layerSizes);
+
 		int totalChildCount = 0;
 		for (int layerSize : layerSizes) {
 			totalChildCount += layerSize;
@@ -576,6 +588,34 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			for (int i = 0; i < layerSize; i++) {
 				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
 				childIndex++;
+			}
+			dagLayers.add(layerProperties);
+		}
+
+		return dagLayers;
+	}
+
+	/**
+	 * DAG_PARTITION_STRATEGY_LAYER_EQUAL: divides the task's total length/upload/
+	 * download equally among its layers, then divides each layer's own share equally
+	 * again among that layer's sub-tasks (two nested equal splits, each exactly
+	 * conserving its input total via splitValue's remainder handling).
+	 */
+	private Deque<List<TaskProperty>> splitTaskPropertyIntoDagLayersByLayerThenSubtask(TaskProperty edgeTask, int[] layerSizes) {
+		long[] layerLengthShares = splitValue(edgeTask.getLength(), layerSizes.length);
+		long[] layerUploadShares = splitValue(edgeTask.getInputFileSize(), layerSizes.length);
+		long[] layerDownloadShares = splitValue(edgeTask.getOutputFileSize(), layerSizes.length);
+
+		Deque<List<TaskProperty>> dagLayers = new ArrayDeque<List<TaskProperty>>(layerSizes.length);
+		for (int l = 0; l < layerSizes.length; l++) {
+			int layerSize = layerSizes[l];
+			long[] lengthParts = splitValue(layerLengthShares[l], layerSize);
+			long[] uploadParts = splitValue(layerUploadShares[l], layerSize);
+			long[] downloadParts = splitValue(layerDownloadShares[l], layerSize);
+
+			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
+			for (int i = 0; i < layerSize; i++) {
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[i], uploadParts[i], downloadParts[i]));
 			}
 			dagLayers.add(layerProperties);
 		}
