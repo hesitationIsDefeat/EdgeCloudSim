@@ -70,7 +70,12 @@ def _get_orchestrator_policy(properties_path):
     return value.split(',')[0].strip()
 
 
-_LEGEND_NAMES = {'NO': 'Not Partitioned', 'FULL': 'DAG Partitioned'}
+_LEGEND_NAMES = {
+    'NO': 'Not Partitioned',
+    'FULL': 'DAG Partitioned (Equal)',
+    'FULL_LAYERED': 'DAG Partitioned (Layer-Equal)',
+}
+
 _PARTITION_POLICY_PATTERN = re.compile(r'PARTITION_(\d+)')
 
 
