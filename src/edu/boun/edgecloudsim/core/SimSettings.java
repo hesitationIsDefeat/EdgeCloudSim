@@ -119,6 +119,18 @@ public class SimSettings {
 	// ONAT: per-run override of every partitionable app's partition_count (e.g.
 	// tutorial14's PARTITION_<N> policies) - see setPartitionCountOverride().
 	private int currentPartitionCountOverride = -1;
+	// ONAT: per-run override of every partitionable app's applications.xml
+	// partition_strategy (e.g. tutorial15's FULL_LAYERED policy) - see
+	// setTaskPartitionStrategyOverride(). Null/empty means "no override", i.e. fall
+	// back to the app's own applications.xml partition_strategy value.
+	private String currentTaskPartitionStrategyOverride = null;
+	/** ONAT: a DAG partition_strategy value (see splitTaskPropertyIntoDagLayers in
+	 * DefaultMobileDeviceManager) that splits a DAG task's total length/upload/download
+	 * equally among its LAYERS first, then splits each layer's share equally again
+	 * among that layer's own sub-tasks - unlike the default "EQUAL" strategy, which
+	 * gives every sub-task in the whole DAG an identical share regardless of which
+	 * layer it belongs to. */
+	public static final String DAG_PARTITION_STRATEGY_LAYER_EQUAL = "LAYER_EQUAL";
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
 	// ONAT: SAR (Search & Rescue) team parameters (tutorial8). Defaulted to 0/empty
@@ -748,6 +760,16 @@ public class SimSettings {
 		return currentPartitionCountOverride > 0;
 	}
 
+	/** ONAT: overrides every partitionable app's applications.xml partition_strategy for
+	 * the current run (e.g. tutorial15's FULL_LAYERED policy -> DAG_PARTITION_STRATEGY_
+	 * LAYER_EQUAL); pass null/empty to clear the override and fall back to the app's own
+	 * applications.xml value. */
+	public void setTaskPartitionStrategyOverride(String partitionStrategy)
+	{
+		currentTaskPartitionStrategyOverride = (partitionStrategy == null || partitionStrategy.trim().isEmpty())
+				? null : partitionStrategy.trim().toUpperCase();
+	}
+
 	public double getNorthernBound() {
 		return NORTHERN_BOUND;
 	}
@@ -853,8 +875,14 @@ public class SimSettings {
 		return taskPartitionCount[taskType];
 	}
 
+	/** ONAT: the app's DAG split strategy for the current run - an active override (see
+	 * setTaskPartitionStrategyOverride()) takes precedence over applications.xml's own
+	 * partition_strategy value, same override-then-fallback convention as
+	 * getTaskPartitionCount()'s partition-count override. */
 	public String getTaskPartitionStrategy(int taskType)
 	{
+		if(currentTaskPartitionStrategyOverride != null)
+			return currentTaskPartitionStrategyOverride;
 		return taskPartitionStrategy[taskType];
 	}
 
