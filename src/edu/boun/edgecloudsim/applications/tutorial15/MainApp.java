@@ -29,8 +29,11 @@
 // UAV mobility is FIXED to a single KMEANS variant (bare PRIORITY_KMEANS, see
 // uav_mobility_options - only one entry, taken once below, not swept); this tutorial
 // instead sweeps task_partition_policies to compare running DAG_WORKFLOW as: one flat
-// unpartitioned task ("NO"), the real layered DAG ("FULL"), and a flat N-way split with
-// no inter-layer dependencies ("PARTITION_<N>", tutorial14-style - see
+// unpartitioned task ("NO"), the real layered DAG split equally across every sub-task
+// regardless of layer ("FULL"), the real layered DAG split equally across layers first
+// and then equally again within each layer ("FULL_LAYERED", see FULL_LAYERED_POLICY
+// below and SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL), and a flat N-way split
+// with no inter-layer dependencies ("PARTITION_<N>", tutorial14-style - see
 // PARTITION_POLICY_PATTERN below and SimSettings.setPartitionCountOverride()/
 // isPartitionCountOverrideActive()) - see also DefaultMobileDeviceManager.submitTask's
 // DAG-vs-flat dispatch and SimSettings.isTaskDag/isTaskPartitionable.
@@ -64,6 +67,12 @@ public class MainApp {
     // SimSettings.setPartitionCountOverride(). NO/FULL (no trailing _<N>) clear the
     // override instead, so they keep their original NO/FULL behavior.
     private static final Pattern PARTITION_POLICY_PATTERN = Pattern.compile("PARTITION_(\\d+)");
+
+    // ONAT: "FULL_LAYERED" runs the same real layered DAG as "FULL" (dag_layers'
+    // dependencies are unchanged) but overrides the DAG split strategy to
+    // SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL for the run - see
+    // SimSettings.setTaskPartitionStrategyOverride().
+    private static final String FULL_LAYERED_POLICY = "FULL_LAYERED";
 
     /**
      * Creates main() to run this example
@@ -182,10 +191,18 @@ public class MainApp {
                             SS.setTaskPartitionPolicy(taskPartitionPolicy);
 
                             // ONAT: only "PARTITION_<N>" entries set a child-count override;
-                            // NO/FULL clear it so they're unaffected by a previous iteration's override.
+                            // NO/FULL/FULL_LAYERED clear it so they're unaffected by a
+                            // previous iteration's override.
                             Matcher partitionPolicyMatcher = PARTITION_POLICY_PATTERN.matcher(taskPartitionPolicy);
                             SS.setPartitionCountOverride(partitionPolicyMatcher.matches() ?
                                     Integer.parseInt(partitionPolicyMatcher.group(1)) : -1);
+
+                            // ONAT: only "FULL_LAYERED" overrides the DAG split strategy to
+                            // layer-then-subtask equal split; every other policy clears the
+                            // override so they fall back to applications.xml's own
+                            // partition_strategy ("EQUAL") unaffected by a previous iteration.
+                            SS.setTaskPartitionStrategyOverride(FULL_LAYERED_POLICY.equals(taskPartitionPolicy) ?
+                                    SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL : null);
 
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);
