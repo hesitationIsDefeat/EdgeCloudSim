@@ -145,7 +145,7 @@ flowchart TB
 | `tutorial7` | Adds **task partitioning** on top of tutorial6 (sweeps `task_partition_policies` in `MainApp`; `applications.xml` apps carry `partitionable`/`partition_count`/`partition_strategy`). |
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
-| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,3,2,1` (1 entry sub-task -> 3 parallel -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG). See §6.3b. |
+| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL,FULL_LAYERED,PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -168,7 +168,9 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   `delay_sensitivity`, `active_period`, `idle_period`, `data_upload`, `data_download`,
   `task_length`, `required_core`; optional: `vm_utilization_on_edge/cloud/mobile`.
   Optional partitioning tags (tutorial7+): `partitionable`, `partition_count`,
-  `partition_strategy` (only `EQUAL` is actually implemented — see §7). Optional DAG tag
+  `partition_strategy` (`EQUAL` is the only value a *flat* partitioned task's split ever
+  reads - still unimplemented there, see §7; a *DAG* task's split additionally supports
+  `SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL` - see §6.3b). Optional DAG tag
   (tutorial15+): `dag_layers` (comma list, e.g. `1,3,2,1` — number of parallel sub-tasks
   per layer, in dependency order); when present it implies `partitionable=true` and
   overrides `partition_count` with the sum of every layer — see §6.3b.
@@ -239,10 +241,12 @@ Current state (important gotcha): `task_partition_policies` in `.properties` is 
 `false` for policy `"NO"`, `true` if a partition-count override is active (see
 `setPartitionCountOverride`/tutorial14's `PARTITION_<N>` policies, which force
 partitioning regardless of `applications.xml`), and otherwise just returns the per-app
-`partitionable` flag from `applications.xml`. Similarly, `partition_strategy`
-is parsed and stored (`SimSettings.getTaskPartitionStrategy`) but **not read by
-anything** — `DefaultMobileDeviceManager.splitTaskProperty` always does an equal split.
-To add a *real* new strategy:
+`partitionable` flag from `applications.xml`. `partition_strategy`
+is parsed and stored (`SimSettings.getTaskPartitionStrategy`), and read via a per-run
+override (`setTaskPartitionStrategyOverride`/tutorial15's `FULL_LAYERED` policy) for the
+*DAG* split path (`DefaultMobileDeviceManager.splitTaskPropertyIntoDagLayers` - see
+§6.3b) — but the *flat* split path (`splitTaskProperty`) still always does an equal
+split regardless of `partition_strategy`. To add a *real* new flat-split strategy:
 1. Add the new strategy name as a case somewhere `DefaultMobileDeviceManager.
    splitTaskProperty(...)` builds `lengthParts`/`uploadParts`/`downloadParts` — branch on
    `SimSettings.getInstance().getTaskPartitionStrategy(taskType)` instead of always
@@ -263,7 +267,7 @@ instead of one flat, mutually independent batch: layer L only starts once every 
 in layer L-1 has completed; sub-tasks within the same layer run in parallel (no
 dependencies from 2+ layers back - a "simple" DAG).
 1. **Data/config**: add `<dag_layers>L0,L1,...</dag_layers>` to the app's
-   `applications.xml` block (e.g. `1,3,2,1`) — `SimSettings.parseApplicationsXML` parses
+   `applications.xml` block (e.g. `1,2,1`) — `SimSettings.parseApplicationsXML` parses
    it into `taskDagLayers[i]` (per-layer sub-task counts), forces `taskPartitionable[i] =
    true`, and overrides `taskPartitionCount[i]` with the sum across every layer. Read back
    via `SimSettings.isTaskDag(taskType)`/`getTaskDagLayers(taskType)`. Do not also set
@@ -289,12 +293,32 @@ dependencies from 2+ layers back - a "simple" DAG).
 3. `task.getChildCount()` (read by `CpuUtilizationModel_Custom` to divide
    `vm_utilization_on_*` per sub-task) is set to the DAG's TOTAL sub-task count across
    every layer for every child, regardless of which layer it's in — so e.g. `dag_layers=
-   1,3,2,1` (7 total) divides the raw utilization by 7 for every sub-task, exactly as a
-   flat 7-way partition would.
+   1,2,1` (4 total) divides the raw utilization by 4 for every sub-task, exactly as a
+   flat 4-way partition would.
 4. `task_partition_policies=NO` still disables partitioning entirely for a DAG app too
    (`isTaskPartitionable` returns `false` before `isTaskDag` is ever consulted) — the task
    runs as one big non-partitioned Cloudlet, same NO/not-NO switch as flat partitioning
    (see §6.3's gotcha).
+5. **Two interchangeable split strategies** control HOW `splitTaskPropertyIntoDagLayers`
+   divides the task's total length/upload/download, selected by
+   `SimSettings.getTaskPartitionStrategy(taskType)` (applications.xml's own
+   `partition_strategy` value, or a per-run override — see below):
+   - `"EQUAL"` (the default/only value anything sets in `applications.xml`): splits the
+     total equally across every sub-task in the WHOLE DAG regardless of layer — a
+     sub-task in a 1-wide layer gets the same share as one in a 3-wide layer.
+   - `SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL` (`"LAYER_EQUAL"`): splits the total
+     equally across LAYERS first, then splits each layer's own share equally again
+     across that layer's sub-tasks (`splitTaskPropertyIntoDagLayersByLayerThenSubtask`) —
+     a sub-task in a narrower layer gets a bigger individual share than one in a wider
+     layer, since every layer (not every sub-task) gets an equal cut of the total.
+   `tutorial15` demonstrates sweeping between the two WITHOUT editing `applications.xml`
+   per run, via a `setTaskPartitionStrategyOverride(String)`/`currentTaskPartitionStrategyOverride`
+   mechanism on `SimSettings` (same override-then-fallback-to-XML convention as
+   `setPartitionCountOverride`): `MainApp`'s `FULL_LAYERED` policy entry calls
+   `SS.setTaskPartitionStrategyOverride(SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL)`
+   (every other policy clears it with `null`, falling back to the app's own `EQUAL`). Copy
+   this override pattern for any further DAG split strategy that should be sweepable
+   per-run rather than baked into one fixed `applications.xml` value.
 
 ### 6.4 New task/application type
 1. Add an `<application name="...">` block to `applications.xml` with the mandatory
@@ -367,19 +391,20 @@ shape of the XML itself needs to change.
 
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
-- **`partition_strategy` is parsed but unused.** `DefaultMobileDeviceManager.
-  splitTaskProperty` always splits length/upload/download equally among children,
-  regardless of the `partition_strategy` XML value (`EQUAL` is the only value anything
-  ever sets, and it's not even checked). See §6.3 before assuming a different strategy
-  name changes behavior.
+- **`partition_strategy` is still parsed-but-unused for FLAT partitioned tasks.**
+  `DefaultMobileDeviceManager.splitTaskProperty` always splits length/upload/download
+  equally among children, regardless of the `partition_strategy` XML value - `EQUAL` is
+  the only value any flat (non-DAG) app's `applications.xml` sets, and it's not even
+  checked there. A *DAG* task's split (`splitTaskPropertyIntoDagLayers`) DOES read
+  `partition_strategy` (plus a per-run override, see §6.3b) - don't assume this gotcha
+  still applies to `dag_layers` apps.
 - **`task_partition_policies` is a NO/not-NO toggle, not a real policy enum.** Any policy
   name other than `"NO"` currently behaves identically (whatever `applications.xml`'s
   per-app `partitionable` says). See §6.3.
-- **A DAG task's layers share the same unimplemented-`partition_strategy` limitation
-  above**: `splitTaskPropertyIntoDagLayers` always does an EQUAL split of the task's
-  total length/upload/download across every sub-task in every layer — there's no way yet
-  to give e.g. the fan-out layer's sub-tasks a different share than the entry/merge
-  layers'. See §6.3b.
+- **A DAG task's two split strategies only change per-sub-task SIZE, never the layer
+  structure/dependencies themselves** - `"EQUAL"` and `DAG_PARTITION_STRATEGY_LAYER_EQUAL`
+  (tutorial15's `FULL_LAYERED`) both still submit the exact same `dag_layers` dependency
+  waves; only how much length/upload/download each sub-task carries differs. See §6.3b.
 - **`UAV.isUserInRange` is a square (bounding-box) check**, not a circle, despite being
   named/used alongside `SERVICE_RADIUS`. `UAVEdgeOrchestrator`'s own range check
   (`SimUtils.getEuclideanDistance(...) > SERVICE_RADIUS`) *is* circular — the two range
