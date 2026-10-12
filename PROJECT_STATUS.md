@@ -18,6 +18,11 @@ CloudSim) extended with:
   (`applications.xml`'s `dag_layers`) instead of one flat independent batch - layer L
   only starts once every sub-task in layer L-1 has completed, while sub-tasks within the
   same layer run in parallel. See §6.3b.
+- **Hard task-timeout**: any task (plain or partitioned/DAG) still in flight
+  (uploading/processing/downloading) `task_timeout` seconds after its own creation is
+  force-cancelled - its VM slot/network reservation is released and it's logged as
+  `TASK_STATUS.TIMED_OUT` - instead of being left to run to completion. Disabled by
+  default (`task_timeout<=0`). See §6.9.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -173,7 +178,10 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   `SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL` - see §6.3b). Optional DAG tag
   (tutorial15+): `dag_layers` (comma list, e.g. `1,3,2,1` — number of parallel sub-tasks
   per layer, in dependency order); when present it implies `partitionable=true` and
-  overrides `partition_count` with the sum of every layer — see §6.3b.
+  overrides `partition_count` with the sum of every layer — see §6.3b. Optional
+  `task_timeout` (seconds, per-app — different apps can have different urgency):
+  `<=0`/absent (the default) disables hard task-timeout cancellation for that app
+  entirely — see §6.9.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
@@ -388,6 +396,54 @@ binding policy). To change *how* VMs are packed onto hosts, edit/extend the rele
 `*VmAllocationPolicy_Custom`; to change *what* hosts/VMs exist, edit `edge_devices.xml`
 (no code change needed) or `DefaultEdgeServerManager`/`DefaultCloudServerManager` if the
 shape of the XML itself needs to change.
+
+### 6.9 Hard task-timeout (feature/timeout)
+Any task — plain or partitioned/DAG — still in flight (uploading, processing on a VM, or
+downloading its result) `task_timeout` seconds after its own creation is force-cancelled:
+whatever network reservation or VM slot it currently holds is released immediately
+(instead of being left to run to natural completion/failure), and it's logged once as
+`SimLogger.TASK_STATUS.TIMED_OUT` (counted in the new `failedTaskDuetoTimeout` array and
+printed in the "Mobility/WLAN Range/Network/**Timeout**" console summary line). This is a
+**core-engine, opt-in, PER-APPLICATION** feature — `task_timeout` is an optional
+`applications.xml` tag (like `max_delay_requirement`), parsed into `SimSettings`'s
+dedicated `taskTimeout[]` array (NOT the generic `taskLookUpTable` columns, since it has
+its own `isTaskTimeoutEnabled(taskType)` helper, same convention as the partitioning
+fields). Defaults to `0` (disabled) for any app that doesn't set it, so different apps in
+the same `applications.xml` can have different urgency/deadlines, and no existing
+tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
+- **Mechanism** (`DefaultMobileDeviceManager`): `armTimeout(topLevelTaskId, taskType)`
+  schedules a `TASK_TIMEOUT` event `SimSettings.getTaskTimeout(taskType)` seconds after a
+  task's creation (called once per plain task in `submitTask` with `task.getTaskType()`,
+  or once per partitioned/DAG task in `submitPartitionableTask`/`submitDagTask` with
+  `edgeTask.getTaskType()` — `topLevelTaskId` is a plain task's own cloudlet id, or a
+  partitioned task's `parentTaskId`). `trackActiveLeg(...)` records,
+  per child task id, a `Runnable` that undoes whatever resource it currently holds
+  (`networkModel.uploadFinished(...)`/`downloadFinished(...)` while in flight over the
+  network, or `vm.getCloudletScheduler().cloudletCancel(cloudletId)` while bound to a
+  VM) — overwritten every time that child advances to its next phase, and cleared
+  (`clearActiveLeg`) once it fully finishes on its own. When `TASK_TIMEOUT` fires
+  (`processTaskTimeout`), every still-active leg's undo action runs, the child id is
+  recorded in `timedOutTaskIds` (so its own now-stale naturally-scheduled follow-up
+  event is skipped instead of double-freeing the same resource — checked at the top of
+  every `REQUEST_RECEIVED_BY_*`/`RESPONSE_RECEIVED_BY_MOBILE_DEVICE` handler), and
+  exactly one `TIMED_OUT` outcome is logged for the top-level task (via a new branch in
+  the existing `failPartition(...)` for a partitioned/DAG task — same "exactly one log
+  entry for the parent" convention as every other partition failure reason — or directly
+  via the new `SimLogger.timedOut(...)` for a plain task). A DAG/partitioned task has only
+  ONE `task_timeout` (read once from its `edgeTask.getTaskType()` at the top-level
+  submission) applied to the WHOLE job, not per-child/per-layer.
+- **Resource release is real, not just bookkeeping**: cancelling a VM-bound task calls
+  CloudSim's own `CloudletScheduler.cloudletCancel(int)` directly on the bound `Vm`
+  (bypassing the `Datacenter`'s `CLOUDLET_CANCEL` SimEvent plumbing, whose exact payload
+  format isn't part of CloudSim's public API) — this actually frees the PEs/MIPS share
+  the cancelled cloudlet was consuming, letting other cloudlets on the same VM use it
+  immediately, and CloudSim never sends a (now-moot) `CLOUDLET_RETURN` for a cancelled
+  cloudlet.
+- Adding a NEW terminal outcome (success or any failure reason) for a task type always
+  requires remembering to resolve its timeout tracking too (`resolveTimeout(topLevelId)`
+  for a plain task, or let `failPartition(...)` do it for a partitioned one) — otherwise
+  a `TimeoutState` entry leaks for the rest of the run and its (by-then-irrelevant)
+  release actions could fire against a task id whose resources have moved on.
 
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
