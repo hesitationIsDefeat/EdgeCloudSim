@@ -32,7 +32,7 @@
 	     selected 100% of the time. -->
 	<application name="DAG_WORKFLOW">
 		<usage_percentage>100</usage_percentage>
-		<dag_layers>1,3,5,5,3,1</dag_layers>
+		<dag_layers>1,2,1</dag_layers>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
 		<poisson_interarrival>120</poisson_interarrival>
@@ -46,5 +46,10 @@
 		<vm_utilization_on_edge>120</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: deadline for the whole DAG job (not per sub-task/layer) - sized to
+		     comfortably exceed a healthy FULL/FULL_LAYERED run's total service time while
+		     still being reachable, so a saturated run can actually time out instead of
+		     only ever failing on VM capacity/bandwidth. -->
+		<task_timeout>20</task_timeout>
 	</application>
 </applications>
