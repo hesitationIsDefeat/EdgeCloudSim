@@ -138,7 +138,7 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 				List<EdgeVM> vmArray = SimManager.getInstance().getEdgeServerManager().getVmList(host.getId());
 				//for each vm...
 				for(int vmIndex=0; vmIndex<vmArray.size(); vmIndex++){
-					totalUtilization += vmArray.get(vmIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
+					totalUtilization += getVmLoad(vmArray.get(vmIndex));
 					vmCounter++;
 				}
 			}
@@ -154,11 +154,26 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 		List<EdgeVM> vmArray = SimManager.getInstance().getEdgeServerManager().getVmList(hostIndex);
 		//for each vm...
 		for(int vmIndex=0; vmIndex<vmArray.size(); vmIndex++){
-			totalUtilization += vmArray.get(vmIndex).getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
+			totalUtilization += getVmLoad(vmArray.get(vmIndex));
 			vmCounter++;
 		}
 		
 		return totalUtilization / vmCounter;
+	}
+
+	// ONAT: getTotalUtilizationOfCpu() alone only reflects the single cloudlet
+	// CloudletSchedulerSpaceShared is actively executing (each edge VM has 1 core, so
+	// at most 1 task's declared share ever shows up there) - it silently ignores every
+	// other task already admitted but still queued behind it, understating real load
+	// under backlog. Adds the declared share of the waiting list too, same fix already
+	// applied to UAVEdgeOrchestrator's admission check (getWaitingListLoad) - otherwise
+	// this metric could never approach 100% even while VMs are continuously saturated.
+	private static double getVmLoad(EdgeVM vm){
+		double load = vm.getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());
+		for (ResCloudlet rcl : vm.getCloudletScheduler().<ResCloudlet>getCloudletWaitingList()) {
+			load += rcl.getCloudlet().getUtilizationOfCpu(CloudSim.clock());
+		}
+		return load;
 	}
 
 	private Datacenter createDatacenter(int index, Element datacenterElement) throws Exception{

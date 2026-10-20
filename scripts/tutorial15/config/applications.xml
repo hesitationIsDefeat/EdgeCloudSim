@@ -25,17 +25,26 @@
 	     (structurally guaranteed REJECTED_DUE_TO_VM_CAPACITY, same convention as
 	     tutorial14's MustPartitionTask), while splitting into several children (FULL,
 	     FULL_LAYERED, or any PARTITION_<N>) divides that 120% by the child count and
-	     comfortably fits once child count >= 2. usage_percentage is unrelated to VM
-	     capacity - it's only the relative weight used to pick an app among a
-	     population's candidates (see SARAwareLoadGenerator.selectTaskType) - moot here
-	     since DAG_WORKFLOW is the only normal-user app, so any positive value is
-	     selected 100% of the time. -->
+	     comfortably fits once child count >= 2. NOTE: this percentage is ONLY a
+	     declared admission-bookkeeping share (CpuUtilizationModel_Custom) used to
+	     decide whether a VM has room to admit a task (immediately execute it, or queue
+	     it behind whatever's already running) - it has NO effect on how fast a task
+	     actually executes (that's governed purely by cloudlet length / VM mips, see
+	     CloudletSchedulerSpaceShared). Consequently the logged/plotted "average VM
+	     utilization" is capped at (120 / child count)% even while a VM is genuinely
+	     busy 100% of the time - do not read a low reported % here as "VMs are mostly
+	     idle"; cross-check against the real busy-time fraction (e.g. instrument
+	     CloudletScheduler.runningCloudlets() > 0) before concluding anything about
+	     actual saturation. usage_percentage is unrelated to VM capacity - it's only
+	     the relative weight used to pick an app among a population's candidates (see
+	     SARAwareLoadGenerator.selectTaskType) - moot here since DAG_WORKFLOW is the
+	     only normal-user app, so any positive value is selected 100% of the time. -->
 	<application name="DAG_WORKFLOW">
 		<usage_percentage>100</usage_percentage>
 		<dag_layers>1,2,1</dag_layers>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>120</poisson_interarrival>
+		<poisson_interarrival>500</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
 		<active_period>45</active_period>
 		<idle_period>15</idle_period>
@@ -50,6 +59,6 @@
 		     comfortably exceed a healthy FULL/FULL_LAYERED run's total service time while
 		     still being reachable, so a saturated run can actually time out instead of
 		     only ever failing on VM capacity/bandwidth. -->
-		<task_timeout>20</task_timeout>
+		<task_timeout>2000</task_timeout>
 	</application>
 </applications>
