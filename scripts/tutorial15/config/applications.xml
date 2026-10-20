@@ -44,10 +44,15 @@
 		<dag_layers>1,2,1</dag_layers>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>500</poisson_interarrival>
+		<poisson_interarrival>100</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
+		<!-- ONAT: idle_period=0 removes the ON/OFF duty-cycle entirely (active windows
+		     become back-to-back with no gap) so task arrivals are a single continuous
+		     Poisson process at rate 1/poisson_interarrival - matching the standard
+		     queueing-theory assumption used for analytical utilization calculations,
+		     instead of being throttled by active_period/(active_period+idle_period). -->
 		<active_period>45</active_period>
-		<idle_period>15</idle_period>
+		<idle_period>0</idle_period>
 		<data_upload>50</data_upload>
 		<data_download>100</data_download>
 		<task_length>20000</task_length>
@@ -55,10 +60,11 @@
 		<vm_utilization_on_edge>120</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
-		<!-- ONAT: deadline for the whole DAG job (not per sub-task/layer) - sized to
-		     comfortably exceed a healthy FULL/FULL_LAYERED run's total service time while
-		     still being reachable, so a saturated run can actually time out instead of
-		     only ever failing on VM capacity/bandwidth. -->
-		<task_timeout>2000</task_timeout>
+		<!-- ONAT: deadline for the whole DAG job (not per sub-task/layer) - must stay
+		     well BELOW simulation_time (1800s = 30 min, see default_config.properties)
+		     or it can never fire within a run at all, leaving a saturated backlog to
+		     linger as "uncompleted" (excluded from SimLogger's failed-task percentage)
+		     instead of being counted as a TIMED_OUT failure - see PROJECT_STATUS.md §6.9. -->
+		<task_timeout>120</task_timeout>
 	</application>
 </applications>
