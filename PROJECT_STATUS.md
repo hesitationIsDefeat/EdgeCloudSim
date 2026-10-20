@@ -397,14 +397,17 @@ binding policy). To change *how* VMs are packed onto hosts, edit/extend the rele
 (no code change needed) or `DefaultEdgeServerManager`/`DefaultCloudServerManager` if the
 shape of the XML itself needs to change.
 
-### 6.9 Hard task-timeout (feature/timeout)
+### 6.9 Soft task-timeout (feature/timeout)
 Any task — plain or partitioned/DAG — still in flight (uploading, processing on a VM, or
-downloading its result) `task_timeout` seconds after its own creation is force-cancelled:
-whatever network reservation or VM slot it currently holds is released immediately
-(instead of being left to run to natural completion/failure), and it's logged once as
-`SimLogger.TASK_STATUS.TIMED_OUT` (counted in the new `failedTaskDuetoTimeout` array and
-printed in the "Mobility/WLAN Range/Network/**Timeout**" console summary line). This is a
-**core-engine, opt-in, PER-APPLICATION** feature — `task_timeout` is an optional
+downloading its result) `task_timeout` seconds after its own creation gets ONE
+`SimLogger.TASK_STATUS.TIMED_OUT` outcome logged (counted in `failedTaskDuetoTimeout` and
+printed in the "Mobility/WLAN Range/Network/**Timeout**" console summary line) — but the
+task itself is **not** cancelled or stopped in any way: its upload/processing/download
+keeps running to completion exactly as if the deadline had never been reached, consuming
+network/VM resources normally throughout. This models a realistic timeout (a client gives
+up waiting and reports an error, but the backend has no way to know that and keeps
+computing/transmitting the already-in-flight work) rather than an instant kill switch.
+This is a **core-engine, opt-in, PER-APPLICATION** feature — `task_timeout` is an optional
 `applications.xml` tag (like `max_delay_requirement`), parsed into `SimSettings`'s
 dedicated `taskTimeout[]` array (NOT the generic `taskLookUpTable` columns, since it has
 its own `isTaskTimeoutEnabled(taskType)` helper, same convention as the partitioning
@@ -416,34 +419,29 @@ tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
   task's creation (called once per plain task in `submitTask` with `task.getTaskType()`,
   or once per partitioned/DAG task in `submitPartitionableTask`/`submitDagTask` with
   `edgeTask.getTaskType()` — `topLevelTaskId` is a plain task's own cloudlet id, or a
-  partitioned task's `parentTaskId`). `trackActiveLeg(...)` records,
-  per child task id, a `Runnable` that undoes whatever resource it currently holds
-  (`networkModel.uploadFinished(...)`/`downloadFinished(...)` while in flight over the
-  network, or `vm.getCloudletScheduler().cloudletCancel(cloudletId)` while bound to a
-  VM) — overwritten every time that child advances to its next phase, and cleared
-  (`clearActiveLeg`) once it fully finishes on its own. When `TASK_TIMEOUT` fires
-  (`processTaskTimeout`), every still-active leg's undo action runs, the child id is
-  recorded in `timedOutTaskIds` (so its own now-stale naturally-scheduled follow-up
-  event is skipped instead of double-freeing the same resource — checked at the top of
-  every `REQUEST_RECEIVED_BY_*`/`RESPONSE_RECEIVED_BY_MOBILE_DEVICE` handler), and
-  exactly one `TIMED_OUT` outcome is logged for the top-level task (via a new branch in
-  the existing `failPartition(...)` for a partitioned/DAG task — same "exactly one log
-  entry for the parent" convention as every other partition failure reason — or directly
-  via the new `SimLogger.timedOut(...)` for a plain task). A DAG/partitioned task has only
+  partitioned task's `parentTaskId`), recording the top-level id in `pendingTimeouts`
+  (map to a VM-tier hint used only for logging, updated via `updateTimeoutVmTypeHint`
+  as the task moves from uploading-to-cloud/edge to actually being bound to a VM —
+  nothing is tracked per-child, since nothing needs to be undone). When `TASK_TIMEOUT`
+  fires (`processTaskTimeout`): if the top-level id is no longer in `pendingTimeouts`
+  (already resolved naturally before the deadline), it's a no-op; otherwise exactly ONE
+  `TIMED_OUT` outcome is logged for the top-level task — via a `TIMED_OUT` branch in the
+  existing `failPartition(...)` for a partitioned/DAG task (same "exactly one log entry
+  for the parent" convention as every other partition failure reason — its children's
+  `PartitionState.failed` flag, already set by `failPartition`, is reused as-is to
+  silently no-op their own later pipeline-advancement/parent-finalization **without**
+  skipping their network bookkeeping calls, which remain unconditional for exactly this
+  reason), or directly via `SimLogger.timedOut(...)` for a plain task (whose own id is
+  added to `timedOutTaskIds` so its later natural terminal event skips re-logging it,
+  while every other call in that event — `uploadFinished`/`downloadFinished`/VM
+  binding/`taskExecuted` — still runs exactly as normal). A DAG/partitioned task has only
   ONE `task_timeout` (read once from its `edgeTask.getTaskType()` at the top-level
   submission) applied to the WHOLE job, not per-child/per-layer.
-- **Resource release is real, not just bookkeeping**: cancelling a VM-bound task calls
-  CloudSim's own `CloudletScheduler.cloudletCancel(int)` directly on the bound `Vm`
-  (bypassing the `Datacenter`'s `CLOUDLET_CANCEL` SimEvent plumbing, whose exact payload
-  format isn't part of CloudSim's public API) — this actually frees the PEs/MIPS share
-  the cancelled cloudlet was consuming, letting other cloudlets on the same VM use it
-  immediately, and CloudSim never sends a (now-moot) `CLOUDLET_RETURN` for a cancelled
-  cloudlet.
 - Adding a NEW terminal outcome (success or any failure reason) for a task type always
   requires remembering to resolve its timeout tracking too (`resolveTimeout(topLevelId)`
   for a plain task, or let `failPartition(...)` do it for a partitioned one) — otherwise
-  a `TimeoutState` entry leaks for the rest of the run and its (by-then-irrelevant)
-  release actions could fire against a task id whose resources have moved on.
+  a `pendingTimeouts` entry leaks for the rest of the run and could log a stale/incorrect
+  TIMED_OUT outcome for a task id that has already resolved through a different path.
 
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
