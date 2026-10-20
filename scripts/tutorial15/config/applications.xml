@@ -25,20 +25,34 @@
 	     (structurally guaranteed REJECTED_DUE_TO_VM_CAPACITY, same convention as
 	     tutorial14's MustPartitionTask), while splitting into several children (FULL,
 	     FULL_LAYERED, or any PARTITION_<N>) divides that 120% by the child count and
-	     comfortably fits once child count >= 2. usage_percentage is unrelated to VM
-	     capacity - it's only the relative weight used to pick an app among a
-	     population's candidates (see SARAwareLoadGenerator.selectTaskType) - moot here
-	     since DAG_WORKFLOW is the only normal-user app, so any positive value is
-	     selected 100% of the time. -->
+	     comfortably fits once child count >= 2. NOTE: this percentage is ONLY a
+	     declared admission-bookkeeping share (CpuUtilizationModel_Custom) used to
+	     decide whether a VM has room to admit a task (immediately execute it, or queue
+	     it behind whatever's already running) - it has NO effect on how fast a task
+	     actually executes (that's governed purely by cloudlet length / VM mips, see
+	     CloudletSchedulerSpaceShared). Consequently the logged/plotted "average VM
+	     utilization" is capped at (120 / child count)% even while a VM is genuinely
+	     busy 100% of the time - do not read a low reported % here as "VMs are mostly
+	     idle"; cross-check against the real busy-time fraction (e.g. instrument
+	     CloudletScheduler.runningCloudlets() > 0) before concluding anything about
+	     actual saturation. usage_percentage is unrelated to VM capacity - it's only
+	     the relative weight used to pick an app among a population's candidates (see
+	     SARAwareLoadGenerator.selectTaskType) - moot here since DAG_WORKFLOW is the
+	     only normal-user app, so any positive value is selected 100% of the time. -->
 	<application name="DAG_WORKFLOW">
 		<usage_percentage>100</usage_percentage>
-		<dag_layers>1,3,5,5,3,1</dag_layers>
+		<dag_layers>1,2,1</dag_layers>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>120</poisson_interarrival>
+		<poisson_interarrival>100</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
+		<!-- ONAT: idle_period=0 removes the ON/OFF duty-cycle entirely (active windows
+		     become back-to-back with no gap) so task arrivals are a single continuous
+		     Poisson process at rate 1/poisson_interarrival - matching the standard
+		     queueing-theory assumption used for analytical utilization calculations,
+		     instead of being throttled by active_period/(active_period+idle_period). -->
 		<active_period>45</active_period>
-		<idle_period>15</idle_period>
+		<idle_period>0</idle_period>
 		<data_upload>50</data_upload>
 		<data_download>100</data_download>
 		<task_length>20000</task_length>
@@ -46,5 +60,11 @@
 		<vm_utilization_on_edge>120</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: deadline for the whole DAG job (not per sub-task/layer) - must stay
+		     well BELOW simulation_time (1800s = 30 min, see default_config.properties)
+		     or it can never fire within a run at all, leaving a saturated backlog to
+		     linger as "uncompleted" (excluded from SimLogger's failed-task percentage)
+		     instead of being counted as a TIMED_OUT failure - see PROJECT_STATUS.md §6.9. -->
+		<task_timeout>120</task_timeout>
 	</application>
 </applications>

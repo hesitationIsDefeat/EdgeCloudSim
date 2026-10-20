@@ -109,7 +109,10 @@ public class SimLogger {
 		/** Task failed due to device mobility (moved out of range) */
 		UNFINISHED_DUE_TO_MOBILITY,
 		/** Task rejected due to WLAN coverage limitations */
-		REJECTED_DUE_TO_WLAN_COVERAGE
+		REJECTED_DUE_TO_WLAN_COVERAGE,
+		/** Task force-cancelled after exceeding SimSettings.getTaskTimeout(taskType) while still
+		 * in flight (uploading/processing/downloading) */
+		TIMED_OUT
 	}
 	
 	/**
@@ -223,6 +226,8 @@ public class SimLogger {
 	private int[] failedTaskDuetoGsmBw = null;
 	private int[] failedTaskDuetoMobility = null;
 	private int[] refectedTaskDuetoWlanRange = null;
+	/** ONAT: tasks force-cancelled after exceeding SimSettings.getTaskTimeout(taskType) - see TASK_STATUS.TIMED_OUT. */
+	private int[] failedTaskDuetoTimeout = null;
 	
 	/** Array storing orchestration overhead measurements per application type */
 	private double[] orchestratorOverhead = null;
@@ -450,6 +455,7 @@ public class SimLogger {
 		failedTaskDuetoGsmBw = new int[numOfAppTypes + 1];
 		failedTaskDuetoMobility = new int[numOfAppTypes + 1];
 		refectedTaskDuetoWlanRange = new int[numOfAppTypes + 1];
+		failedTaskDuetoTimeout = new int[numOfAppTypes + 1];
 
 		orchestratorOverhead = new double[numOfAppTypes + 1];
 	}
@@ -588,6 +594,18 @@ public class SimLogger {
 	 */
 	public void failedDueToBandwidth(int taskId, double time, NETWORK_DELAY_TYPES delayType) {
 		taskMap.get(taskId).taskFailedDueToBandwidth(time, delayType);
+		recordLog(taskId);
+	}
+
+	/**
+	 * Records a hard task-timeout cancellation (see SimSettings.getTaskTimeout(taskType)).
+	 * 
+	 * @param taskId unique identifier for the task
+	 * @param time simulation time when the timeout fired
+	 * @param vmType VM tier the task was uploading to/running on/downloading from when cancelled
+	 */
+	public void timedOut(int taskId, double time, int vmType) {
+		taskMap.get(taskId).taskTimedOut(time, vmType);
 		recordLog(taskId);
 	}
 
@@ -816,6 +834,7 @@ public class SimLogger {
 		failedTaskDuetoLanBw[numOfAppTypes] = IntStream.of(failedTaskDuetoLanBw).sum();
 		failedTaskDuetoMobility[numOfAppTypes] = IntStream.of(failedTaskDuetoMobility).sum();
 		refectedTaskDuetoWlanRange[numOfAppTypes] = IntStream.of(refectedTaskDuetoWlanRange).sum();
+		failedTaskDuetoTimeout[numOfAppTypes] = IntStream.of(failedTaskDuetoTimeout).sum();
 
 		orchestratorOverhead[numOfAppTypes] = DoubleStream.of(orchestratorOverhead).sum();
 		
@@ -1068,14 +1087,15 @@ public class SimLogger {
 				+ failedTaskDueToVmCapacityOnCloud[numOfAppTypes] + "/"
 				+ failedTaskDueToVmCapacityOnMobile[numOfAppTypes] + ")");
 		
-		printLine("# of failed tasks due to Mobility/WLAN Range/Network(WLAN/MAN/WAN/GSM): "
+		printLine("# of failed tasks due to Mobility/WLAN Range/Network(WLAN/MAN/WAN/GSM)/Timeout: "
 				+ failedTaskDuetoMobility[numOfAppTypes]
 				+ "/" + refectedTaskDuetoWlanRange[numOfAppTypes]
 				+ "/" + failedTaskDuetoBw[numOfAppTypes] 
 				+ "(" + failedTaskDuetoLanBw[numOfAppTypes] 
 				+ "/" + failedTaskDuetoManBw[numOfAppTypes] 
 				+ "/" + failedTaskDuetoWanBw[numOfAppTypes] 
-				+ "/" + failedTaskDuetoGsmBw[numOfAppTypes] + ")");
+				+ "/" + failedTaskDuetoGsmBw[numOfAppTypes] + ")"
+				+ "/" + failedTaskDuetoTimeout[numOfAppTypes]);
 		
 		printLine("percentage of failed tasks: "
 				+ String.format("%.6f", ((double) failedTask[numOfAppTypes] * (double) 100)
@@ -1240,7 +1260,9 @@ public class SimLogger {
 			failedTaskDuetoMobility[value.getTaskType()]++;
 		} else if (value.getStatus() == SimLogger.TASK_STATUS.REJECTED_DUE_TO_WLAN_COVERAGE) {
 			refectedTaskDuetoWlanRange[value.getTaskType()]++;;
-        }
+        } else if (value.getStatus() == SimLogger.TASK_STATUS.TIMED_OUT) {
+			failedTaskDuetoTimeout[value.getTaskType()]++;
+		}
 		
 		//if deep file logging is enabled, record every task result
 		if (SimSettings.getInstance().getDeepFileLoggingEnabled()){
@@ -1546,6 +1568,12 @@ class LogItem {
 		status = SimLogger.TASK_STATUS.UNFINISHED_DUE_TO_MOBILITY;
 	}
 
+	public void taskTimedOut(double time, int _vmType) {
+		vmType = _vmType;
+		taskEndTime = time;
+		status = SimLogger.TASK_STATUS.TIMED_OUT;
+	}
+
 	public void setCost(double _bwCost, double _cpuCos) {
 		bwCost = _bwCost;
 		cpuCost = _cpuCos;
@@ -1672,6 +1700,8 @@ class LogItem {
 			result += "4"; // failure reason 4
         else if (status == SimLogger.TASK_STATUS.REJECTED_DUE_TO_WLAN_COVERAGE)
             result += "5"; // failure reason 5
+		else if (status == SimLogger.TASK_STATUS.TIMED_OUT)
+			result += "6"; // failure reason 6
 		else
 			result += "0"; // default failure reason
 		return result;

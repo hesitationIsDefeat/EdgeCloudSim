@@ -17,6 +17,8 @@
 		<vm_utilization_on_edge>2</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>0.02</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: low urgency - a delayed text message is merely stale, not useless. -->
+		<task_timeout>10</task_timeout>
 	</application>
 	<application name="PHOTO_MESSAGE">
 		<usage_percentage>30</usage_percentage>
@@ -32,6 +34,8 @@
 		<vm_utilization_on_edge>6</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>0.08</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: larger payload than TEXT_MESSAGE, still not urgent - a bit more slack. -->
+		<task_timeout>15</task_timeout>
 	</application>
 
 	<!-- ONAT: SAR (Search & Rescue) team applications - the original tutorial6 apps.
@@ -52,6 +56,8 @@
 		<vm_utilization_on_edge>35</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>0.65</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: heaviest task (16000 MI) - map fusion isn't instant, so it gets the most slack. -->
+		<task_timeout>20</task_timeout>
 	</application>
 	<application name="SITUATION_AWARENESS_ALERTS">
 		<usage_percentage>50</usage_percentage>
@@ -67,5 +73,7 @@
 		<vm_utilization_on_edge>10</vm_utilization_on_edge>
 		<vm_utilization_on_cloud>0.12</vm_utilization_on_cloud>
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+		<!-- ONAT: real-time alerts - the most urgent app here, tightest deadline. -->
+		<task_timeout>5</task_timeout>
 	</application>
 </applications>

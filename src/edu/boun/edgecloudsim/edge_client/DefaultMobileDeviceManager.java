@@ -19,8 +19,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.UtilizationModelFull;
@@ -48,8 +50,31 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	private static final int REQUEST_RECEIVED_BY_CLOUD = BASE + 1;
 	private static final int REQUEST_RECEIVED_BY_EDGE_DEVICE = BASE + 2;
 	private static final int RESPONSE_RECEIVED_BY_MOBILE_DEVICE = BASE + 3;
+	// ONAT: fires SimSettings.getTaskTimeout(taskType) seconds after a top-level task's
+	// creation (see armTimeout()) to log it as TIMED_OUT if it's still in flight - does
+	// NOT stop the task itself (see processTaskTimeout) - carries the top-level task id
+	// (a plain task's own cloudlet id, or a partitioned/DAG task's parentTaskId) as its
+	// event data.
+	private static final int TASK_TIMEOUT = BASE + 4;
 	private int taskIdCounter=0;  // Counter for generating unique task IDs
 	private final Map<Integer, PartitionState> partitionStateMap = new HashMap<Integer, PartitionState>();
+	// ONAT: hard task-timeout bookkeeping (see SimSettings.isTaskTimeoutEnabled(taskType)/
+	// getTaskTimeout(taskType)) - empty/unused for every app that doesn't set task_timeout.
+	// Keyed by top-level task id (own cloudlet id for a plain task, parentTaskId for a
+	// partitioned/DAG task); value is the VM tier (SimSettings.VM_TYPES ordinal) to log
+	// the timeout against if it fires - see armTimeout()/updateTimeoutVmTypeHint() below.
+	// A timeout does NOT cancel or otherwise touch the task - it keeps
+	// uploading/processing/downloading exactly as if the deadline had never been
+	// reached (more realistic: a client giving up on a slow request doesn't make the
+	// server stop computing it) - firing only logs one TIMED_OUT outcome and suppresses
+	// the task's own later, redundant natural outcome (see timedOutTaskIds).
+	private final Map<Integer, Integer> pendingTimeouts = new HashMap<Integer, Integer>();
+	// ONAT: top-level ids of PLAIN tasks already logged as TIMED_OUT - their own eventual
+	// natural completion/failure must skip logging a second outcome (the task itself runs
+	// to completion unaffected; only the redundant SimLogger call is suppressed).
+	// Partitioned/DAG tasks don't need this: PartitionState.failed (set by failPartition)
+	// already serves the same purpose for their children.
+	private final Set<Integer> timedOutTaskIds = new HashSet<Integer>();
 	
 	/**
 	 * Constructor for default mobile device manager.
@@ -114,6 +139,40 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			this.remainingLayers = null;
 		}
 	}
+
+	/**
+	 * ONAT: arms the hard task-timeout for a newly submitted top-level task (a plain
+	 * task's own id, or a partitioned/DAG task's parentTaskId) - the deadline is per-app
+	 * (see applications.xml's task_timeout), so the task's own type must be supplied.
+	 * No-op when task_timeout is disabled for that app (<=0), so apps that don't set it
+	 * see no behavior change at all.
+	 */
+	private void armTimeout(int topLevelTaskId, int taskType) {
+		SimSettings SS = SimSettings.getInstance();
+		if (!SS.isTaskTimeoutEnabled(taskType))
+			return;
+		pendingTimeouts.put(topLevelTaskId, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+		schedule(getId(), SS.getTaskTimeout(taskType), TASK_TIMEOUT, topLevelTaskId);
+	}
+
+	/**
+	 * Updates the VM tier to log against if topLevelTaskId's timeout fires later (a plain
+	 * task may move from uploading-to-cloud/edge to actually being bound to a VM of that
+	 * tier) - no-op if the task was never armed (timeout disabled) or already resolved.
+	 */
+	private void updateTimeoutVmTypeHint(int topLevelTaskId, int vmTypeHint) {
+		if (pendingTimeouts.containsKey(topLevelTaskId))
+			pendingTimeouts.put(topLevelTaskId, vmTypeHint);
+	}
+
+	/**
+	 * Marks topLevelTaskId fully resolved (succeeded or failed through its own normal
+	 * path, NOT via a timeout) - disarms its pending TASK_TIMEOUT check. Safe to call
+	 * unconditionally (no-op if the task was never armed).
+	 */
+	private void resolveTimeout(int topLevelTaskId) {
+		pendingTimeouts.remove(topLevelTaskId);
+	}
 	
 	/**
 	 * Creates and returns the CPU utilization model for tasks.
@@ -169,12 +228,18 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				}
 				else
 				{
-					SimLogger.getInstance().failedDueToMobility(task.getCloudletId(), CloudSim.clock());
+					if (!timedOutTaskIds.remove(task.getCloudletId())) {
+						SimLogger.getInstance().failedDueToMobility(task.getCloudletId(), CloudSim.clock());
+					}
+					resolveTimeout(task.getCloudletId());
 				}
 			}
 			else
 			{
-				SimLogger.getInstance().failedDueToBandwidth(task.getCloudletId(), CloudSim.clock(), NETWORK_DELAY_TYPES.WAN_DELAY);
+				if (!timedOutTaskIds.remove(task.getCloudletId())) {
+					SimLogger.getInstance().failedDueToBandwidth(task.getCloudletId(), CloudSim.clock(), NETWORK_DELAY_TYPES.WAN_DELAY);
+				}
+				resolveTimeout(task.getCloudletId());
 			}
 		}
 		else{
@@ -201,7 +266,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 						failPartition(task.getParentTaskId(), SimLogger.TASK_STATUS.UNFINISHED_DUE_TO_MOBILITY, NETWORK_DELAY_TYPES.WLAN_DELAY);
 					}
 					else {
-						SimLogger.getInstance().failedDueToMobility(task.getCloudletId(), CloudSim.clock());
+						if (!timedOutTaskIds.remove(task.getCloudletId())) {
+							SimLogger.getInstance().failedDueToMobility(task.getCloudletId(), CloudSim.clock());
+						}
+						resolveTimeout(task.getCloudletId());
 					}
 				}
 			}
@@ -211,7 +279,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 					failPartition(task.getParentTaskId(), SimLogger.TASK_STATUS.UNFINISHED_DUE_TO_BANDWIDTH, NETWORK_DELAY_TYPES.WLAN_DELAY);
 				}
 				else {
-					SimLogger.getInstance().failedDueToBandwidth(task.getCloudletId(), CloudSim.clock(), NETWORK_DELAY_TYPES.WLAN_DELAY);
+					if (!timedOutTaskIds.remove(task.getCloudletId())) {
+						SimLogger.getInstance().failedDueToBandwidth(task.getCloudletId(), CloudSim.clock(), NETWORK_DELAY_TYPES.WLAN_DELAY);
+					}
+					resolveTimeout(task.getCloudletId());
 				}
 			}
 		}
@@ -315,19 +386,59 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 							SimLogger.getInstance().setDownloadDelay(partitionState.parentTaskId, partitionState.downloadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
 							SimLogger.getInstance().taskEnded(partitionState.parentTaskId, CloudSim.clock());
 							partitionStateMap.remove(partitionState.parentTaskId);
+							resolveTimeout(partitionState.parentTaskId);
 						}
 					}
 					break;
 				}
 				
 				// Log task completion
-				SimLogger.getInstance().taskEnded(task.getCloudletId(), CloudSim.clock());
+				if (!timedOutTaskIds.remove(task.getCloudletId())) {
+					SimLogger.getInstance().taskEnded(task.getCloudletId(), CloudSim.clock());
+				}
+				resolveTimeout(task.getCloudletId());
+				break;
+			}
+			case TASK_TIMEOUT:
+			{
+				int topLevelTaskId = (Integer) ev.getData();
+				processTaskTimeout(topLevelTaskId);
 				break;
 			}
 			default:
 				SimLogger.printLine(getName() + ".processOtherEvent(): " + "Error - event unknown by this DatacenterBroker. Terminating simulation...");
 				System.exit(1);
 				break;
+		}
+	}
+
+	/**
+	 * Logs a TIMED_OUT outcome for a top-level task that is still in flight
+	 * SimSettings.getTaskTimeout(taskType) seconds after its own creation (see
+	 * armTimeout()) - does NOT stop/cancel it (the task keeps uploading/processing/
+	 * downloading exactly as if the deadline had not been reached, more realistic than
+	 * an instant hard-cancel - see the class-level comment on pendingTimeouts). Logs
+	 * exactly once for the top-level task (via failPartition for a partitioned/DAG task,
+	 * or directly otherwise) and marks it so its own later, natural outcome is
+	 * suppressed instead of double-logged. No-op if the task already resolved
+	 * (succeeded or failed) through its own normal path before this event fired.
+	 */
+	private void processTaskTimeout(int topLevelTaskId) {
+		Integer vmTypeHint = pendingTimeouts.remove(topLevelTaskId);
+		if (vmTypeHint == null) {
+			return;
+		}
+
+		if (partitionStateMap.containsKey(topLevelTaskId)) {
+			// Children keep running untouched - failPartition only marks the parent as
+			// resolved/logs once; the existing partitionState.failed guard already makes
+			// every child's own eventual natural outcome a no-op for pipeline-advancement
+			// purposes while still letting its network bookkeeping proceed normally.
+			failPartition(topLevelTaskId, SimLogger.TASK_STATUS.TIMED_OUT, NETWORK_DELAY_TYPES.WLAN_DELAY);
+		}
+		else {
+			timedOutTaskIds.add(topLevelTaskId);
+			SimLogger.getInstance().timedOut(topLevelTaskId, CloudSim.clock(), vmTypeHint);
 		}
 	}
 
@@ -370,6 +481,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				(int)task.getCloudletFileSize(),
 				(int)task.getCloudletOutputSize());
 
+		// ONAT: arm the hard task-timeout (see SimSettings.isTaskTimeoutEnabled(taskType)) from
+		// this task's own creation instant - no-op when disabled for this app.
+		armTimeout(task.getCloudletId(), task.getTaskType());
+
 		// Use edge orchestrator to decide where to process this task
 		int nextHopId = SimManager.getInstance().getEdgeOrchestrator().getDeviceToOffload(task);
 		
@@ -383,6 +498,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				networkModel.uploadStarted(currentLocation, nextHopId);
 				SimLogger.getInstance().taskStarted(task.getCloudletId(), CloudSim.clock());
 				SimLogger.getInstance().setUploadDelay(task.getCloudletId(), WanDelay, NETWORK_DELAY_TYPES.WAN_DELAY);
+				updateTimeoutVmTypeHint(task.getCloudletId(), SimSettings.VM_TYPES.CLOUD_VM.ordinal());
 				schedule(getId(), WanDelay, REQUEST_RECEIVED_BY_CLOUD, task);
 			}
 			else
@@ -393,6 +509,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 						CloudSim.clock(),
 						SimSettings.VM_TYPES.CLOUD_VM.ordinal(),
 						NETWORK_DELAY_TYPES.WAN_DELAY);
+				resolveTimeout(task.getCloudletId());
 			}
 		}
 		else if(nextHopId == SimSettings.GENERIC_EDGE_DEVICE_ID) {
@@ -405,6 +522,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				schedule(getId(), WlanDelay, REQUEST_RECEIVED_BY_EDGE_DEVICE, task);
 				SimLogger.getInstance().taskStarted(task.getCloudletId(), CloudSim.clock());
 				SimLogger.getInstance().setUploadDelay(task.getCloudletId(), WlanDelay, NETWORK_DELAY_TYPES.WLAN_DELAY);
+				updateTimeoutVmTypeHint(task.getCloudletId(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
 			}
 			else {
 				// WLAN bandwidth not available - reject task
@@ -413,6 +531,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 						CloudSim.clock(),
 						SimSettings.VM_TYPES.EDGE_VM.ordinal(),
 						NETWORK_DELAY_TYPES.WLAN_DELAY);
+				resolveTimeout(task.getCloudletId());
 			}
 		}
 		else {
@@ -427,6 +546,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		SimLogger.getInstance().addLog(edgeTask.getMobileDeviceId(), parentTaskId, SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
 		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
 		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+		armTimeout(parentTaskId, edgeTask.getTaskType());
 
 		List<TaskProperty> childProperties = splitTaskProperty(edgeTask);
 		PartitionState partitionState = new PartitionState(parentTaskId, childProperties.size());
@@ -449,6 +569,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		SimLogger.getInstance().addLog(edgeTask.getMobileDeviceId(), parentTaskId, SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
 		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
 		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+		armTimeout(parentTaskId, edgeTask.getTaskType());
 
 		Deque<List<TaskProperty>> dagLayers = splitTaskPropertyIntoDagLayers(edgeTask);
 		int totalDagChildCount = 0;
@@ -652,7 +773,14 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		else if (status == SimLogger.TASK_STATUS.UNFINISHED_DUE_TO_MOBILITY) {
 			SimLogger.getInstance().failedDueToMobility(parentTaskId, CloudSim.clock());
 		}
+		else if (status == SimLogger.TASK_STATUS.TIMED_OUT) {
+			SimLogger.getInstance().timedOut(parentTaskId, CloudSim.clock(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
+		}
 		partitionStateMap.remove(parentTaskId);
+		// ONAT: clears a still-pending TASK_TIMEOUT regardless of which reason this
+		// partition failed for - without this, an unrelated (non-timeout) failure would
+		// leave a stale pending-timeout entry/scheduled event around for the rest of the run.
+		resolveTimeout(parentTaskId);
 	}
 	
 	/**
@@ -673,7 +801,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			int vmType = (datacenterId == SimSettings.CLOUD_DATACENTER_ID)
 					? SimSettings.VM_TYPES.CLOUD_VM.ordinal()
 					: SimSettings.VM_TYPES.EDGE_VM.ordinal();
-			SimLogger.getInstance().rejectedDueToVMCapacity(task.getCloudletId(), CloudSim.clock(), vmType);
+			if (!timedOutTaskIds.remove(task.getCloudletId())) {
+				SimLogger.getInstance().rejectedDueToVMCapacity(task.getCloudletId(), CloudSim.clock(), vmType);
+			}
+			resolveTimeout(task.getCloudletId());
 			return;
 		}
 		submitTaskToVm(task, delay, selectedVM);
@@ -710,6 +841,11 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		getCloudletList().add(task);
 		bindCloudletToVm(task.getCloudletId(),selectedVM.getId());
 		
+		// ONAT: update the logging hint now that this task is bound to a real VM tier -
+		// if it times out while processing, it keeps running untouched (see
+		// processTaskTimeout); this only affects which tier TIMED_OUT would log against.
+		updateTimeoutVmTypeHint(task.isPartitionChild() ? task.getParentTaskId() : task.getCloudletId(), vmType);
+
 		// ONAT: Schedule directly to the already-known datacenterId instead of
 		// getVmsToDatacentersMap().get(task.getVmId()) - that map is only populated once
 		// the broker processes this VM's VM_CREATE_ACK event, which (due to CloudSim's

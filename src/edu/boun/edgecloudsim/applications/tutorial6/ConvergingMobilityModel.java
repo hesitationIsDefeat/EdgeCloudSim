@@ -31,13 +31,18 @@ import edu.boun.edgecloudsim.utils.SimUtils;
  */
 public class ConvergingMobilityModel extends MobilityModel {
 
-    // ONAT: Hardcoded meeting area centers, arranged as an equilateral triangle
-    // scattered roughly equally around the (0,0)-(1000,1000) simulation area.
-    private static final double[][] MEETING_AREAS = {
+    // ONAT: Default hardcoded meeting area centers, arranged as an equilateral triangle
+    // scattered roughly equally around the (0,0)-(1000,1000) simulation area. Used unless
+    // a caller supplies its own set via the 4-arg constructor (e.g. tutorial15's single
+    // centered meeting zone) - other tutorials are unaffected since they all use the
+    // 3-arg constructor.
+    private static final double[][] DEFAULT_MEETING_AREAS = {
             {500, 850}, // Area 0 - top
             {197, 325}, // Area 1 - bottom-left
             {803, 325}, // Area 2 - bottom-right
     };
+
+    private final double[][] meetingAreas;
 
     // ONAT: Once a device gets within this distance of its assigned area's
     // center it is considered "captured" and confined within this radius
@@ -60,8 +65,19 @@ public class ConvergingMobilityModel extends MobilityModel {
      * @param _assignmentPolicy Policy used to assign devices to meeting areas (ROUND_ROBIN or CLOSEST)
      */
     public ConvergingMobilityModel(int _numberOfMobileDevices, double _simulationTime, String _assignmentPolicy) {
+        this(_numberOfMobileDevices, _simulationTime, _assignmentPolicy, DEFAULT_MEETING_AREAS);
+    }
+
+    /**
+     * @param _numberOfMobileDevices Total number of mobile devices to model
+     * @param _simulationTime Duration of the simulation in seconds
+     * @param _assignmentPolicy Policy used to assign devices to meeting areas (ROUND_ROBIN or CLOSEST)
+     * @param _meetingAreas Custom set of {x, y} meeting area centers, overriding the default 3
+     */
+    public ConvergingMobilityModel(int _numberOfMobileDevices, double _simulationTime, String _assignmentPolicy, double[][] _meetingAreas) {
         super(_numberOfMobileDevices, _simulationTime);
         this.assignmentPolicy = _assignmentPolicy;
+        this.meetingAreas = _meetingAreas;
     }
 
     @Override
@@ -80,14 +96,14 @@ public class ConvergingMobilityModel extends MobilityModel {
 
             targetArea[i] = ASSIGNMENT_CLOSEST.equals(assignmentPolicy)
                     ? getClosestAreaIndex(x_pos, y_pos)
-                    : i % MEETING_AREAS.length; // ROUND_ROBIN (default)
+                    : i % meetingAreas.length; // ROUND_ROBIN (default)
         }
 
         // Generate the complete movement trajectory for each device
         for (int i = 0; i < numberOfMobileDevices; i++) {
             TreeMap<Double, Location> treeMap = treeMapArray.get(i);
-            double targetX = MEETING_AREAS[targetArea[i]][0];
-            double targetY = MEETING_AREAS[targetArea[i]][1];
+            double targetX = meetingAreas[targetArea[i]][0];
+            double targetY = meetingAreas[targetArea[i]][1];
 
             boolean captured = false;
 
@@ -169,11 +185,11 @@ public class ConvergingMobilityModel extends MobilityModel {
         return new int[]{boundedX, boundedY};
     }
 
-    private static int getClosestAreaIndex(double x, double y) {
+    private int getClosestAreaIndex(double x, double y) {
         int closest = 0;
         double minDistance = Double.MAX_VALUE;
-        for (int a = 0; a < MEETING_AREAS.length; a++) {
-            double dist = distance(x, y, MEETING_AREAS[a][0], MEETING_AREAS[a][1]);
+        for (int a = 0; a < meetingAreas.length; a++) {
+            double dist = distance(x, y, meetingAreas[a][0], meetingAreas[a][1]);
             if (dist < minDistance) {
                 minDistance = dist;
                 closest = a;

@@ -18,6 +18,11 @@ CloudSim) extended with:
   (`applications.xml`'s `dag_layers`) instead of one flat independent batch - layer L
   only starts once every sub-task in layer L-1 has completed, while sub-tasks within the
   same layer run in parallel. See §6.3b.
+- **Hard task-timeout**: any task (plain or partitioned/DAG) still in flight
+  (uploading/processing/downloading) `task_timeout` seconds after its own creation is
+  force-cancelled - its VM slot/network reservation is released and it's logged as
+  `TASK_STATUS.TIMED_OUT` - instead of being left to run to completion. Disabled by
+  default (`task_timeout<=0`). See §6.9.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -145,7 +150,7 @@ flowchart TB
 | `tutorial7` | Adds **task partitioning** on top of tutorial6 (sweeps `task_partition_policies` in `MainApp`; `applications.xml` apps carry `partitionable`/`partition_count`/`partition_strategy`). |
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
-| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL,FULL_LAYERED,PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b. |
+| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL,FULL_LAYERED,PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -173,7 +178,10 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   `SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL` - see §6.3b). Optional DAG tag
   (tutorial15+): `dag_layers` (comma list, e.g. `1,3,2,1` — number of parallel sub-tasks
   per layer, in dependency order); when present it implies `partitionable=true` and
-  overrides `partition_count` with the sum of every layer — see §6.3b.
+  overrides `partition_count` with the sum of every layer — see §6.3b. Optional
+  `task_timeout` (seconds, per-app — different apps can have different urgency):
+  `<=0`/absent (the default) disables hard task-timeout cancellation for that app
+  entirely — see §6.9.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
@@ -388,6 +396,52 @@ binding policy). To change *how* VMs are packed onto hosts, edit/extend the rele
 `*VmAllocationPolicy_Custom`; to change *what* hosts/VMs exist, edit `edge_devices.xml`
 (no code change needed) or `DefaultEdgeServerManager`/`DefaultCloudServerManager` if the
 shape of the XML itself needs to change.
+
+### 6.9 Soft task-timeout (feature/timeout)
+Any task — plain or partitioned/DAG — still in flight (uploading, processing on a VM, or
+downloading its result) `task_timeout` seconds after its own creation gets ONE
+`SimLogger.TASK_STATUS.TIMED_OUT` outcome logged (counted in `failedTaskDuetoTimeout` and
+printed in the "Mobility/WLAN Range/Network/**Timeout**" console summary line) — but the
+task itself is **not** cancelled or stopped in any way: its upload/processing/download
+keeps running to completion exactly as if the deadline had never been reached, consuming
+network/VM resources normally throughout. This models a realistic timeout (a client gives
+up waiting and reports an error, but the backend has no way to know that and keeps
+computing/transmitting the already-in-flight work) rather than an instant kill switch.
+This is a **core-engine, opt-in, PER-APPLICATION** feature — `task_timeout` is an optional
+`applications.xml` tag (like `max_delay_requirement`), parsed into `SimSettings`'s
+dedicated `taskTimeout[]` array (NOT the generic `taskLookUpTable` columns, since it has
+its own `isTaskTimeoutEnabled(taskType)` helper, same convention as the partitioning
+fields). Defaults to `0` (disabled) for any app that doesn't set it, so different apps in
+the same `applications.xml` can have different urgency/deadlines, and no existing
+tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
+- **Mechanism** (`DefaultMobileDeviceManager`): `armTimeout(topLevelTaskId, taskType)`
+  schedules a `TASK_TIMEOUT` event `SimSettings.getTaskTimeout(taskType)` seconds after a
+  task's creation (called once per plain task in `submitTask` with `task.getTaskType()`,
+  or once per partitioned/DAG task in `submitPartitionableTask`/`submitDagTask` with
+  `edgeTask.getTaskType()` — `topLevelTaskId` is a plain task's own cloudlet id, or a
+  partitioned task's `parentTaskId`), recording the top-level id in `pendingTimeouts`
+  (map to a VM-tier hint used only for logging, updated via `updateTimeoutVmTypeHint`
+  as the task moves from uploading-to-cloud/edge to actually being bound to a VM —
+  nothing is tracked per-child, since nothing needs to be undone). When `TASK_TIMEOUT`
+  fires (`processTaskTimeout`): if the top-level id is no longer in `pendingTimeouts`
+  (already resolved naturally before the deadline), it's a no-op; otherwise exactly ONE
+  `TIMED_OUT` outcome is logged for the top-level task — via a `TIMED_OUT` branch in the
+  existing `failPartition(...)` for a partitioned/DAG task (same "exactly one log entry
+  for the parent" convention as every other partition failure reason — its children's
+  `PartitionState.failed` flag, already set by `failPartition`, is reused as-is to
+  silently no-op their own later pipeline-advancement/parent-finalization **without**
+  skipping their network bookkeeping calls, which remain unconditional for exactly this
+  reason), or directly via `SimLogger.timedOut(...)` for a plain task (whose own id is
+  added to `timedOutTaskIds` so its later natural terminal event skips re-logging it,
+  while every other call in that event — `uploadFinished`/`downloadFinished`/VM
+  binding/`taskExecuted` — still runs exactly as normal). A DAG/partitioned task has only
+  ONE `task_timeout` (read once from its `edgeTask.getTaskType()` at the top-level
+  submission) applied to the WHOLE job, not per-child/per-layer.
+- Adding a NEW terminal outcome (success or any failure reason) for a task type always
+  requires remembering to resolve its timeout tracking too (`resolveTimeout(topLevelId)`
+  for a plain task, or let `failPartition(...)` do it for a partitioned one) — otherwise
+  a `pendingTimeouts` entry leaks for the rest of the run and could log a stale/incorrect
+  TIMED_OUT outcome for a task id that has already resolved through a different path.
 
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 

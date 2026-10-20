@@ -191,6 +191,11 @@ public class SimSettings {
 	 * starts once every sub-task in layer L-1 has completed. null when taskDagEnabled[i]
 	 * is false. */
 	private int[][] taskDagLayers = null;
+	/** ONAT: per-app hard task-timeout (seconds, see task_timeout in applications.xml) -
+	 * a task of this type still in flight this long after its own creation is
+	 * force-cancelled (see DefaultMobileDeviceManager's TASK_TIMEOUT handling).
+	 * Defaults to 0 (disabled) for apps that don't set it. */
+	private double[] taskTimeout = null;
 
     /** ONAT:
      * Event tag for edge server movement. */
@@ -760,6 +765,20 @@ public class SimSettings {
 		return currentPartitionCountOverride > 0;
 	}
 
+	/** ONAT: configured hard task-timeout (seconds) for this task type - see
+	 * task_timeout in applications.xml. */
+	public double getTaskTimeout(int taskType)
+	{
+		return taskTimeout[taskType];
+	}
+
+	/** ONAT: true if this task type's task_timeout is set to a positive value - see
+	 * DefaultMobileDeviceManager's TASK_TIMEOUT handling. */
+	public boolean isTaskTimeoutEnabled(int taskType)
+	{
+		return taskTimeout[taskType] > 0;
+	}
+
 	/** ONAT: overrides every partitionable app's applications.xml partition_strategy for
 	 * the current run (e.g. tutorial15's FULL_LAYERED policy -> DAG_PARTITION_STRATEGY_
 	 * LAYER_EQUAL); pass null/empty to clear the override and fall back to the app's own
@@ -988,6 +1007,7 @@ public class SimSettings {
 			taskPartitionStrategy = new String[appList.getLength()];
 			taskDagEnabled = new boolean[appList.getLength()];
 			taskDagLayers = new int[appList.getLength()][];
+			taskTimeout = new double[appList.getLength()];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
 
@@ -1000,12 +1020,18 @@ public class SimSettings {
 				taskPartitionStrategy[i] = "EQUAL";
 				taskDagEnabled[i] = false;
 				taskDagLayers[i] = null;
+				taskTimeout[i] = 0;
 				if(checkElement(appElement, "partitionable"))
 					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
 				if(checkElement(appElement, "partition_count"))
 					taskPartitionCount[i] = Math.max(1, Integer.parseInt(appElement.getElementsByTagName("partition_count").item(0).getTextContent()));
 				if(checkElement(appElement, "partition_strategy"))
 					taskPartitionStrategy[i] = appElement.getElementsByTagName("partition_strategy").item(0).getTextContent();
+				// ONAT: per-app hard task-timeout (seconds) - <=0 (the default, when absent)
+				// disables it for this app entirely, see DefaultMobileDeviceManager's
+				// TASK_TIMEOUT handling.
+				if(checkElement(appElement, "task_timeout"))
+					taskTimeout[i] = Double.parseDouble(appElement.getElementsByTagName("task_timeout").item(0).getTextContent());
 				// ONAT: dag_layers (e.g. "1,3,2,1") marks this app as a DAG task - a
 				// partitionable task whose children are grouped into dependent layers
 				// instead of one flat independent batch. It implies partitionable=true
