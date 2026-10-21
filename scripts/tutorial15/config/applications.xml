@@ -44,7 +44,7 @@
 		<dag_layers>1,2,1</dag_layers>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
-		<poisson_interarrival>100</poisson_interarrival>
+		<poisson_interarrival>167</poisson_interarrival>
 		<delay_sensitivity>0</delay_sensitivity>
 		<!-- ONAT: idle_period=0 removes the ON/OFF duty-cycle entirely (active windows
 		     become back-to-back with no gap) so task arrivals are a single continuous
