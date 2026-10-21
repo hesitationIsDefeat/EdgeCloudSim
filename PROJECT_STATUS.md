@@ -17,12 +17,12 @@ CloudSim) extended with:
   also be a **DAG** (tutorial15+): sub-tasks are grouped into dependent LAYERS
   (`applications.xml`'s `dag_layers`) instead of one flat independent batch - layer L
   only starts once every sub-task in layer L-1 has completed, while sub-tasks within the
-  same layer run in parallel. See §6.3b.
-- **Hard task-timeout**: any task (plain or partitioned/DAG) still in flight
-  (uploading/processing/downloading) `task_timeout` seconds after its own creation is
-  force-cancelled - its VM slot/network reservation is released and it's logged as
-  `TASK_STATUS.TIMED_OUT` - instead of being left to run to completion. Disabled by
-  default (`task_timeout<=0`). See §6.9.
+  same layer run in parallel. See §6.3b. Layer transitions incur a simulated UAV relay
+  delay (`uav_bandwidth` config, `NetworkModel.getInterLayerDelay`) - see §6.3c.
+- **Soft task-timeout**: any task (plain or partitioned/DAG) still in flight
+  (uploading/processing/downloading) `task_timeout` seconds after its own creation gets
+  ONE `TASK_STATUS.TIMED_OUT` outcome logged, but keeps running to completion unaffected
+  - it is NOT cancelled. Disabled by default (`task_timeout<=0`). See §6.9.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -327,6 +327,35 @@ dependencies from 2+ layers back - a "simple" DAG).
    (every other policy clears it with `null`, falling back to the app's own `EQUAL`). Copy
    this override pattern for any further DAG split strategy that should be sweepable
    per-run rather than baked into one fixed `applications.xml` value.
+
+### 6.3c DAG inter-layer (UAV relay) delay (tutorial15)
+Simulates the network cost of relaying a finished DAG layer's output data to wherever
+the next layer executes, so layer transitions aren't instantaneous.
+1. **Config**: `uav_bandwidth=<Mbps>` in `default_config.properties` (same Mbps-in/
+   Kbps-stored convention as `wlan_bandwidth`/`wan_bandwidth`/`gsm_bandwidth`) — parsed
+   into `SimSettings.BANDWITH_UAV`, read via `getUavBandwidth()`. `<=0` (including the
+   default when the key is absent) disables the delay entirely (treated as 0/
+   instantaneous).
+2. **Formula**: `NetworkModel.getInterLayerDelay(dataSizeKB, bandwidthKbps)` is a
+   concrete (non-abstract) method on the base class — deliberately simple
+   (`dataSizeKB * 8 / bandwidthKbps`, no queueing) and isolated in one place so it can be
+   swapped for a more realistic model later without touching call sites.
+3. **Runtime**: `PartitionState` gained `currentLayerOutputDataSum`, which accumulates
+   every sub-task's `getCloudletOutputSize()` as the running layer's children complete
+   (reset to 0 in `submitChildTaskBatch`, i.e. at the start of each layer). Once a layer
+   finishes, instead of submitting the next layer immediately, the handler computes the
+   delay via `getInterLayerDelay(currentLayerOutputDataSum, getUavBandwidth())`, logs it
+   (`SimLogger.addInterLayerDelay`), and schedules a new `SUBMIT_NEXT_DAG_LAYER` event
+   after that delay (rather than submitting synchronously) — the handler re-checks
+   `partitionStateMap`/`partitionState.failed` before submitting, so a failure during the
+   relay delay still correctly discards the remaining layers.
+4. **Logging**: new `NETWORK_DELAY_TYPES.UAV_DELAY`, accumulated per-task in
+   `LogItem.uavDelay` (via `addUavDelay`, `+=` not overwrite, since a DAG can have
+   multiple layer transitions) and folded into `LogItem.getNetworkDelay()`'s total — so it
+   counts toward "overall network delay" automatically. Separately plottable via
+   `SimLogger`'s `uavDelay`/`uavUsage` arrays: averaged into the console summary line
+   ("UAV delay: ...") and appended as a TRAILING field on `genericResult5`'s CSV line
+   (existing column positions for other tutorials are untouched).
 
 ### 6.4 New task/application type
 1. Add an `<application name="...">` block to `applications.xml` with the mandatory

@@ -47,7 +47,7 @@ public class SimSettings {
 	public static enum VM_TYPES { MOBILE_VM, EDGE_VM, CLOUD_VM }
 
 	/** Enumeration for different types of network delays in edge computing */
-	public static enum NETWORK_DELAY_TYPES { WLAN_DELAY, MAN_DELAY, WAN_DELAY, GSM_DELAY }
+	public static enum NETWORK_DELAY_TYPES { WLAN_DELAY, MAN_DELAY, WAN_DELAY, GSM_DELAY, UAV_DELAY }
 
 	/** Predefined component IDs for different simulation entities */
 	public static final int CLOUD_DATACENTER_ID = 1000;
@@ -89,6 +89,9 @@ public class SimSettings {
 	private int BANDWITH_MAN;              // Metropolitan Area Network bandwidth (Mbps)
 	private int BANDWITH_WAN;              // Wide Area Network bandwidth (Mbps)
 	private int BANDWITH_GSM;              // GSM network bandwidth (Mbps)
+	// ONAT: inter-UAV link bandwidth (Mbps) - used for the DAG inter-layer data relay
+	// delay (see NetworkModel.getInterLayerDelay()), not for device<->UAV traffic.
+	private int BANDWITH_UAV;
 
 	// Cloud infrastructure configuration parameters
 	private int NUM_OF_HOST_ON_CLOUD_DATACENTER;
@@ -263,6 +266,7 @@ public class SimSettings {
 			BANDWITH_MAN = 1000 * Integer.parseInt(prop.getProperty("man_bandwidth", "0"));
 			BANDWITH_WAN = 1000 * Integer.parseInt(prop.getProperty("wan_bandwidth", "0"));
 			BANDWITH_GSM =  1000 * Integer.parseInt(prop.getProperty("gsm_bandwidth", "0"));
+			BANDWITH_UAV = 1000 * Integer.parseInt(prop.getProperty("uav_bandwidth", "0"));
 
 			NUM_OF_HOST_ON_CLOUD_DATACENTER = Integer.parseInt(prop.getProperty("number_of_host_on_cloud_datacenter"));
 			NUM_OF_VM_ON_CLOUD_HOST = Integer.parseInt(prop.getProperty("number_of_vm_on_cloud_host"));
@@ -459,6 +463,15 @@ public class SimSettings {
 	public int getGsmBandwidth()
 	{
 		return BANDWITH_GSM;
+	}
+
+	/**
+	 * returns inter-UAV bandwidth (in Mbps unit) from properties file - used for the
+	 * DAG inter-layer data relay delay, not for device&lt;-&gt;UAV traffic.
+	 */
+	public int getUavBandwidth()
+	{
+		return BANDWITH_UAV;
 	}
 
 	/**

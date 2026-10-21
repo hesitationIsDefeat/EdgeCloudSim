@@ -50,12 +50,16 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	private static final int REQUEST_RECEIVED_BY_CLOUD = BASE + 1;
 	private static final int REQUEST_RECEIVED_BY_EDGE_DEVICE = BASE + 2;
 	private static final int RESPONSE_RECEIVED_BY_MOBILE_DEVICE = BASE + 3;
+	// ONAT: fires after a DAG layer's inter-layer relay delay has elapsed (see
+	// NetworkModel.getInterLayerDelay()) to actually submit the next layer's children -
+	// carries a PendingLayerSubmission as its event data.
+	private static final int SUBMIT_NEXT_DAG_LAYER = BASE + 4;
 	// ONAT: fires SimSettings.getTaskTimeout(taskType) seconds after a top-level task's
 	// creation (see armTimeout()) to log it as TIMED_OUT if it's still in flight - does
 	// NOT stop the task itself (see processTaskTimeout) - carries the top-level task id
 	// (a plain task's own cloudlet id, or a partitioned/DAG task's parentTaskId) as its
 	// event data.
-	private static final int TASK_TIMEOUT = BASE + 4;
+	private static final int TASK_TIMEOUT = BASE + 5;
 	private int taskIdCounter=0;  // Counter for generating unique task IDs
 	private final Map<Integer, PartitionState> partitionStateMap = new HashMap<Integer, PartitionState>();
 	// ONAT: hard task-timeout bookkeeping (see SimSettings.isTaskTimeoutEnabled(taskType)/
@@ -101,6 +105,16 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		}
 	}
 
+	private static class PendingLayerSubmission {
+		private final int parentTaskId;
+		private final List<Task> childTasks;
+
+		private PendingLayerSubmission(int parentTaskId, List<Task> childTasks) {
+			this.parentTaskId = parentTaskId;
+			this.childTasks = childTasks;
+		}
+	}
+
 	private static class PartitionState {
 		private final int parentTaskId;
 		// Not final: for a DAG task this is reset to the CURRENT layer's size each time
@@ -126,6 +140,11 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		private boolean isDag;
 		private int totalDagChildCount;
 		private Deque<List<TaskProperty>> remainingLayers;
+		// ONAT: sum of the CURRENTLY running DAG layer's children's output data (KB) -
+		// reset per layer in submitChildTaskBatch, used to simulate the delay of
+		// relaying that layer's combined result to wherever the next layer runs (see
+		// NetworkModel.getInterLayerDelay()). Unused for a flat (non-DAG) partition.
+		private long currentLayerOutputDataSum;
 
 		private PartitionState(int parentTaskId, int totalChildren) {
 			this.parentTaskId = parentTaskId;
@@ -137,6 +156,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			this.isDag = false;
 			this.totalDagChildCount = totalChildren;
 			this.remainingLayers = null;
+			this.currentLayerOutputDataSum = 0;
 		}
 	}
 
@@ -369,6 +389,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 						break;
 					}
 					partitionState.completedChildren++;
+					// ONAT: only meaningful for a DAG task (see currentLayerOutputDataSum) -
+					// harmless no-op accumulation for a flat partition, which never reads it.
+					partitionState.currentLayerOutputDataSum += task.getCloudletOutputSize();
 					if (partitionState.completedChildren >= partitionState.totalChildren) {
 						if (partitionState.isDag && !partitionState.remainingLayers.isEmpty()) {
 							// Every sub-task in the current DAG layer just finished -
@@ -376,7 +399,19 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 							// submitted, since they depend on this layer's completion.
 							List<Task> nextLayerTasks = buildChildTasks(partitionState.parentTaskId,
 									partitionState.remainingLayers.poll(), partitionState.totalDagChildCount);
-							submitChildTaskBatch(partitionState.parentTaskId, partitionState, nextLayerTasks, networkModel);
+
+							// ONAT: simulate the hand-off delay of relaying this finished
+							// layer's combined output to wherever the next layer will run
+							// (see NetworkModel.getInterLayerDelay()) - logged into the
+							// parent's own entry (both as its own UAV_DELAY category and,
+							// via getNetworkDelay()'s total, folded into the overall
+							// network delay/service time) and only THEN is the next layer
+							// actually submitted - not immediately.
+							double interLayerDelay = networkModel.getInterLayerDelay(
+									partitionState.currentLayerOutputDataSum, SimSettings.getInstance().getUavBandwidth());
+							SimLogger.getInstance().addInterLayerDelay(partitionState.parentTaskId, interLayerDelay);
+							schedule(getId(), interLayerDelay, SUBMIT_NEXT_DAG_LAYER,
+									new PendingLayerSubmission(partitionState.parentTaskId, nextLayerTasks));
 						}
 						else {
 							// Roll up every child's upload/download delay into the parent's
@@ -403,6 +438,16 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			{
 				int topLevelTaskId = (Integer) ev.getData();
 				processTaskTimeout(topLevelTaskId);
+				break;
+			}
+			case SUBMIT_NEXT_DAG_LAYER:
+			{
+				PendingLayerSubmission pending = (PendingLayerSubmission) ev.getData();
+				PartitionState partitionState = partitionStateMap.get(pending.parentTaskId);
+				if (partitionState == null || partitionState.failed) {
+					break;
+				}
+				submitChildTaskBatch(pending.parentTaskId, partitionState, pending.childTasks, networkModel);
 				break;
 			}
 			default:
@@ -622,6 +667,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, NetworkModel networkModel) {
 		partitionState.completedChildren = 0;
 		partitionState.totalChildren = childTasks.size();
+		partitionState.currentLayerOutputDataSum = 0;
 
 		// Select the target VM/UAV for every sibling sub-task at the same time so
 		// the orchestrator can account for the cumulative load the whole batch
