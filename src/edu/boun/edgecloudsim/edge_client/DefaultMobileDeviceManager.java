@@ -54,6 +54,12 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	// NetworkModel.getInterLayerDelay()) to actually submit the next layer's children -
 	// carries a PendingLayerSubmission as its event data.
 	private static final int SUBMIT_NEXT_DAG_LAYER = BASE + 4;
+	// ONAT: fires SimSettings.getTaskTimeout(taskType) seconds after a top-level task's
+	// creation (see armTimeout()) to log it as TIMED_OUT if it's still in flight - does
+	// NOT stop the task itself (see processTaskTimeout) - carries the top-level task id
+	// (a plain task's own cloudlet id, or a partitioned/DAG task's parentTaskId) as its
+	// event data.
+	private static final int TASK_TIMEOUT = BASE + 5;
 	private int taskIdCounter=0;  // Counter for generating unique task IDs
 	private final Map<Integer, PartitionState> partitionStateMap = new HashMap<Integer, PartitionState>();
 	// ONAT: hard task-timeout bookkeeping (see SimSettings.isTaskTimeoutEnabled(taskType)/
