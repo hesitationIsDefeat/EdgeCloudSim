@@ -160,4 +160,25 @@ public abstract class NetworkModel {
 	 * @param sourceDeviceId the ID of the source device that sent the download
 	 */
 	public abstract void downloadFinished(Location accessPointLocation, int sourceDeviceId);
+
+	/**
+	 * Computes the delay to relay dataSizeKB of data between two UAVs over a link of
+	 * the given bandwidth - used to simulate the hand-off between consecutive layers
+	 * of a DAG task (see DefaultMobileDeviceManager): once a layer finishes, its
+	 * combined output must reach wherever the next layer will run before that layer
+	 * can start. A concrete (not abstract) default so existing NetworkModel subclasses
+	 * that never deal with DAG tasks aren't forced to implement it; a single pure
+	 * function of its two inputs, kept deliberately simple (no queueing) so the
+	 * formula can be edited here later without touching any caller.
+	 *
+	 * @param dataSizeKB amount of data to relay, in KB (same unit as applications.xml's
+	 *        data_upload/data_download, i.e. what Task/Cloudlet file sizes are in)
+	 * @param bandwidthKbps inter-UAV link bandwidth, in Kbps (see SimSettings.getUavBandwidth())
+	 * @return the relay delay in seconds; 0 if bandwidthKbps is not positive
+	 */
+	public double getInterLayerDelay(double dataSizeKB, int bandwidthKbps) {
+		if (bandwidthKbps <= 0)
+			return 0;
+		return (dataSizeKB * 8) / bandwidthKbps; // KB -> Kb, Kb / Kbps = seconds
+	}
 }

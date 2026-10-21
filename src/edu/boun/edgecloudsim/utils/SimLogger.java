@@ -196,11 +196,15 @@ public class SimLogger {
 	private double[] wanDelay = null;
 	private double[] manDelay = null;
 	private double[] lanDelay = null;
+	// ONAT: DAG inter-layer relay delay (see NetworkModel.getInterLayerDelay()) - not
+	// device<->UAV traffic, so tracked separately from lan/man/wan/gsmDelay.
+	private double[] uavDelay = null;
 	
 	private double[] gsmUsage = null;
 	private double[] wanUsage = null;
 	private double[] manUsage = null;
 	private double[] lanUsage = null;
+	private double[] uavUsage = null;
 
 	private double[] serviceTime = null;
 	private double[] serviceTimeOnCloud = null;
@@ -425,11 +429,13 @@ public class SimLogger {
 		wanDelay = new double[numOfAppTypes + 1];
 		manDelay = new double[numOfAppTypes + 1];
 		lanDelay = new double[numOfAppTypes + 1];
+		uavDelay = new double[numOfAppTypes + 1];
 		
 		gsmUsage = new double[numOfAppTypes + 1];
 		wanUsage = new double[numOfAppTypes + 1];
 		manUsage = new double[numOfAppTypes + 1];
 		lanUsage = new double[numOfAppTypes + 1];
+		uavUsage = new double[numOfAppTypes + 1];
 
 		serviceTime = new double[numOfAppTypes + 1];
 		serviceTimeOnCloud = new double[numOfAppTypes + 1];
@@ -509,6 +515,18 @@ public class SimLogger {
 	 */
 	public void setDownloadDelay(int taskId, double delay, NETWORK_DELAY_TYPES delayType) {
 		taskMap.get(taskId).setDownloadDelay(delay, delayType);
+	}
+
+	/**
+	 * Records a DAG inter-layer relay delay for a task - accumulates rather than
+	 * overwrites, since a DAG job may hand off between multiple consecutive layer
+	 * pairs over its lifetime (see NetworkModel.getInterLayerDelay()).
+	 * 
+	 * @param taskId unique identifier for the (parent) task
+	 * @param delay inter-layer relay delay in seconds
+	 */
+	public void addInterLayerDelay(int taskId, double delay) {
+		taskMap.get(taskId).addUavDelay(delay);
 	}
 	
 	/**
@@ -804,11 +822,13 @@ public class SimLogger {
 		manDelay[numOfAppTypes] = DoubleStream.of(manDelay).sum();
 		wanDelay[numOfAppTypes] = DoubleStream.of(wanDelay).sum();
 		gsmDelay[numOfAppTypes] = DoubleStream.of(gsmDelay).sum();
+		uavDelay[numOfAppTypes] = DoubleStream.of(uavDelay).sum();
 		
 		lanUsage[numOfAppTypes] = DoubleStream.of(lanUsage).sum();
 		manUsage[numOfAppTypes] = DoubleStream.of(manUsage).sum();
 		wanUsage[numOfAppTypes] = DoubleStream.of(wanUsage).sum();
 		gsmUsage[numOfAppTypes] = DoubleStream.of(gsmUsage).sum();
+		uavUsage[numOfAppTypes] = DoubleStream.of(uavUsage).sum();
 
 		serviceTime[numOfAppTypes] = DoubleStream.of(serviceTime).sum();
 		serviceTimeOnCloud[numOfAppTypes] = DoubleStream.of(serviceTimeOnCloud).sum();
@@ -924,6 +944,8 @@ public class SimLogger {
 						: (wanDelay[i] / (double) wanUsage[i]);
 				double _gsmDelay = (gsmUsage[i] == 0) ? 0.0
 						: (gsmDelay[i] / (double) gsmUsage[i]);
+				double _uavDelay = (uavUsage[i] == 0) ? 0.0
+						: (uavDelay[i] / (double) uavUsage[i]);
 				
 				// write generic results
 				String genericResult1 = Integer.toString(completedTask[i]) + SimSettings.DELIMITER
@@ -993,7 +1015,8 @@ public class SimLogger {
 						+ Integer.toString(failedTaskDuetoLanBw[i]) + SimSettings.DELIMITER
 						+ Integer.toString(failedTaskDuetoManBw[i]) + SimSettings.DELIMITER
 						+ Integer.toString(failedTaskDuetoWanBw[i]) + SimSettings.DELIMITER
-						+ Integer.toString(failedTaskDuetoGsmBw[i]);
+						+ Integer.toString(failedTaskDuetoGsmBw[i]) + SimSettings.DELIMITER
+						+ Double.toString(_uavDelay);
 				
 				//performance related values
 				double _orchestratorOverhead = orchestratorOverhead[i] / (double) (failedTask[i] + completedTask[i]);
@@ -1131,7 +1154,9 @@ public class SimLogger {
 				+ ", " + "WAN delay: "
 				+ String.format("%.6f", wanDelay[numOfAppTypes] / (double) wanUsage[numOfAppTypes])
 				+ ", " + "GSM delay: "
-				+ String.format("%.6f", gsmDelay[numOfAppTypes] / (double) gsmUsage[numOfAppTypes]) + ")");
+				+ String.format("%.6f", gsmDelay[numOfAppTypes] / (double) gsmUsage[numOfAppTypes])
+				+ ", " + "UAV delay: "
+				+ String.format("%.6f", uavDelay[numOfAppTypes] / (double) uavUsage[numOfAppTypes]) + ")");
 
 		printLine("average server utilization Edge/Cloud/Mobile: " 
 				+ String.format("%.6f", totalVmLoadOnEdge / (double) vmLoadList.size()) + "/"
@@ -1222,6 +1247,10 @@ public class SimLogger {
 			if(value.getNetworkDelay(NETWORK_DELAY_TYPES.GSM_DELAY) != 0) {
 				gsmUsage[value.getTaskType()]++;
 				gsmDelay[value.getTaskType()] += value.getNetworkDelay(NETWORK_DELAY_TYPES.GSM_DELAY);
+			}
+			if(value.getNetworkDelay(NETWORK_DELAY_TYPES.UAV_DELAY) != 0) {
+				uavUsage[value.getTaskType()]++;
+				uavDelay[value.getTaskType()] += value.getNetworkDelay(NETWORK_DELAY_TYPES.UAV_DELAY);
 			}
 			
 			if (value.getVmType() == SimSettings.VM_TYPES.CLOUD_VM.ordinal()) {
@@ -1456,6 +1485,10 @@ class LogItem {
 	private double manDownloadDelay;
 	private double wanDownloadDelay;
 	private double gsmDownloadDelay;
+	// ONAT: DAG inter-layer relay delay (see NetworkModel.getInterLayerDelay()) - a
+	// single accumulator (not split into upload/download legs like the others above),
+	// since a DAG job can hand off between MULTIPLE layer pairs; see addUavDelay().
+	private double uavDelay;
 	private double bwCost;
 	private double cpuCost;
 	private double QoE;
@@ -1503,6 +1536,12 @@ class LogItem {
 			wanDownloadDelay = delay;
 		else if(delayType == NETWORK_DELAY_TYPES.GSM_DELAY)
 			gsmDownloadDelay = delay;
+	}
+
+	/** Accumulates (rather than overwrites) since a DAG job can relay data between
+	 * multiple consecutive layer pairs over its lifetime - see NetworkModel.getInterLayerDelay(). */
+	public void addUavDelay(double delay) {
+		uavDelay += delay;
 	}
 	
 	public void taskAssigned(int _datacenterId, int _hostId, int _vmId, int _vmType) {
@@ -1641,6 +1680,8 @@ class LogItem {
 			result = wanDownloadDelay + wanUploadDelay;
 		else if(delayType == NETWORK_DELAY_TYPES.GSM_DELAY)
 			result = gsmDownloadDelay + gsmUploadDelay;
+		else if(delayType == NETWORK_DELAY_TYPES.UAV_DELAY)
+			result = uavDelay;
 		
 		return result;
 	}
@@ -1653,7 +1694,8 @@ class LogItem {
 				lanDownloadDelay +
 				manDownloadDelay +
 				wanDownloadDelay +
-				gsmDownloadDelay;
+				gsmDownloadDelay +
+				uavDelay;
 	}
 	
 	public double getServiceTime() {
