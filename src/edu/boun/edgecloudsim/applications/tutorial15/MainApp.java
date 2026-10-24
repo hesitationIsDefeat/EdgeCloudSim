@@ -74,6 +74,23 @@ public class MainApp {
     // SimSettings.setTaskPartitionStrategyOverride().
     private static final String FULL_LAYERED_POLICY = "FULL_LAYERED";
 
+    // ONAT: "FULL_WEIGHTED" runs the same real layered DAG as "FULL"/"FULL_LAYERED"
+    // but overrides the DAG split strategy to SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED,
+    // which uses DAG_WORKFLOW's explicit applications.xml dag_partition_weights instead
+    // of an even split - "FULL"/"FULL_LAYERED" are unaffected by that tag since they
+    // never select this strategy.
+    private static final String FULL_WEIGHTED_POLICY = "FULL_WEIGHTED";
+
+    // ONAT: a "FULL_(<weights>)" entry (e.g. "FULL_(0.1,(0.4,0.4),0.1)") also selects
+    // DAG_PARTITION_STRATEGY_WEIGHTED, like "FULL_WEIGHTED", but additionally encodes
+    // its OWN weight values in the policy name itself (same dag_partition_weights
+    // syntax - see SimSettings.parseDagPartitionWeights()) via
+    // SimSettings.setTaskPartitionWeightsOverride(), instead of reading
+    // DAG_WORKFLOW's applications.xml dag_partition_weights - same "encode a parameter
+    // in the policy name" convention as PARTITION_<N> above / tutorial9's VORONOI_<factor>
+    // (see PROJECT_STATUS.md §6.2 point 8).
+    private static final String FULL_WEIGHTED_PREFIX = "FULL_(";
+
     /**
      * Creates main() to run this example
      */
@@ -197,12 +214,29 @@ public class MainApp {
                             SS.setPartitionCountOverride(partitionPolicyMatcher.matches() ?
                                     Integer.parseInt(partitionPolicyMatcher.group(1)) : -1);
 
-                            // ONAT: only "FULL_LAYERED" overrides the DAG split strategy to
-                            // layer-then-subtask equal split; every other policy clears the
-                            // override so they fall back to applications.xml's own
-                            // partition_strategy ("EQUAL") unaffected by a previous iteration.
-                            SS.setTaskPartitionStrategyOverride(FULL_LAYERED_POLICY.equals(taskPartitionPolicy) ?
-                                    SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL : null);
+                            // ONAT: only "FULL_LAYERED"/"FULL_WEIGHTED"/"FULL_(<weights>)"
+                            // override the DAG split strategy (to layer-then-subtask equal
+                            // split, or to weighted - reading the app's own
+                            // dag_partition_weights, or the policy name's own encoded
+                            // weights, respectively); every other policy clears both
+                            // overrides so they fall back to applications.xml's own
+                            // partition_strategy ("EQUAL") unaffected by a previous
+                            // iteration.
+                            String taskPartitionStrategyOverride = null;
+                            String taskPartitionWeightsOverride = null;
+                            if (FULL_LAYERED_POLICY.equals(taskPartitionPolicy)) {
+                                taskPartitionStrategyOverride = SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL;
+                            }
+                            else if (FULL_WEIGHTED_POLICY.equals(taskPartitionPolicy)) {
+                                taskPartitionStrategyOverride = SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED;
+                            }
+                            else if (taskPartitionPolicy.startsWith(FULL_WEIGHTED_PREFIX) && taskPartitionPolicy.endsWith(")")) {
+                                taskPartitionStrategyOverride = SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED;
+                                taskPartitionWeightsOverride = taskPartitionPolicy.substring(
+                                        FULL_WEIGHTED_PREFIX.length(), taskPartitionPolicy.length() - 1);
+                            }
+                            SS.setTaskPartitionStrategyOverride(taskPartitionStrategyOverride);
+                            SS.setTaskPartitionWeightsOverride(taskPartitionWeightsOverride);
 
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);

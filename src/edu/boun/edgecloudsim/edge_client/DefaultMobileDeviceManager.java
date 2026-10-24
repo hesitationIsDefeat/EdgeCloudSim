@@ -17,6 +17,7 @@ package edu.boun.edgecloudsim.edge_client;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -722,8 +723,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 
 	/**
 	 * Splits a DAG task's total length/upload/download into per-layer lists in
-	 * dependency order, dispatching to one of two strategies (see
-	 * SimSettings.getTaskPartitionStrategy()):
+	 * dependency order, dispatching on SimSettings.getTaskPartitionStrategy() (the
+	 * app's own applications.xml partition_strategy, or a per-run override - see
+	 * SimSettings.setTaskPartitionStrategyOverride()) to one of three strategies:
 	 * - "EQUAL" (default): split evenly across every sub-task in every layer (same
 	 *   EQUAL-split convention splitTaskProperty uses for flat partitions), so every
 	 *   sub-task gets an identical share regardless of which layer it's in.
@@ -731,12 +733,34 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	 *   then split each layer's share evenly again across that layer's own
 	 *   sub-tasks - sub-tasks in a smaller layer get a bigger individual share than
 	 *   sub-tasks in a bigger layer.
+	 * - DAG_PARTITION_STRATEGY_WEIGHTED: use explicit per-node weights instead of an
+	 *   even split - a per-run weights override (SimSettings.
+	 *   isTaskPartitionWeightsOverrideActive()/getTaskPartitionWeightsOverride(), e.g.
+	 *   tutorial15's "FULL_(0.1,(0.4,0.4),0.1)" policy encoding its own weights) takes
+	 *   precedence if active, otherwise falls back to the app's own applications.xml
+	 *   dag_partition_weights (SimSettings.getTaskDagPartitionWeights()). Either way,
+	 *   only consulted when this strategy is actually selected, so dag_partition_weights
+	 *   has no effect on EQUAL/LAYER_EQUAL runs of the same app (e.g. tutorial15's
+	 *   "FULL"/"FULL_LAYERED" vs "FULL_WEIGHTED"/"FULL_(...)").
 	 */
 	private Deque<List<TaskProperty>> splitTaskPropertyIntoDagLayers(TaskProperty edgeTask) {
 		int[] layerSizes = SimSettings.getInstance().getTaskDagLayers(edgeTask.getTaskType());
+		String strategy = SimSettings.getInstance().getTaskPartitionStrategy(edgeTask.getTaskType());
 
-		if (SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL.equals(
-				SimSettings.getInstance().getTaskPartitionStrategy(edgeTask.getTaskType())))
+		if (SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED.equals(strategy)) {
+			double[][] weights;
+			if (SimSettings.getInstance().isTaskPartitionWeightsOverrideActive())
+				weights = SimSettings.getInstance().getTaskPartitionWeightsOverride(edgeTask.getTaskType());
+			else if (SimSettings.getInstance().isTaskDagPartitionWeighted(edgeTask.getTaskType()))
+				weights = SimSettings.getInstance().getTaskDagPartitionWeights(edgeTask.getTaskType());
+			else
+				throw new IllegalStateException("Task type " + edgeTask.getTaskType()
+						+ " selected DAG_PARTITION_STRATEGY_WEIGHTED but defines no dag_partition_weights"
+						+ " and no per-run weights override is active");
+			return splitTaskPropertyIntoDagLayersByWeight(edgeTask, layerSizes, weights);
+		}
+
+		if (SimSettings.DAG_PARTITION_STRATEGY_LAYER_EQUAL.equals(strategy))
 			return splitTaskPropertyIntoDagLayersByLayerThenSubtask(edgeTask, layerSizes);
 
 		int totalChildCount = 0;
@@ -790,12 +814,86 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		return dagLayers;
 	}
 
+	/**
+	 * Explicit per-node weights (applications.xml's dag_partition_weights, see
+	 * SimSettings.getTaskDagPartitionWeights()): flattens the per-layer weight
+	 * fractions (already validated to sum to 1.0 across the whole DAG) into one list,
+	 * in dependency order, and splits the task's total length/upload/download in a
+	 * single shot via splitValueByWeights - so e.g. weights {{0.1}, {0.5, 0.3}, {0.1}}
+	 * give the entry node 10% of the task, the two second-layer nodes 50%/30%, and the
+	 * final node 10%.
+	 */
+	private Deque<List<TaskProperty>> splitTaskPropertyIntoDagLayersByWeight(TaskProperty edgeTask, int[] layerSizes, double[][] weights) {
+		int totalChildCount = 0;
+		for (int layerSize : layerSizes) {
+			totalChildCount += layerSize;
+		}
+
+		double[] flatWeights = new double[totalChildCount];
+		int weightIndex = 0;
+		for (double[] layerWeights : weights) {
+			for (double weight : layerWeights) {
+				flatWeights[weightIndex++] = weight;
+			}
+		}
+
+		long[] lengthParts = splitValueByWeights(edgeTask.getLength(), flatWeights);
+		long[] uploadParts = splitValueByWeights(edgeTask.getInputFileSize(), flatWeights);
+		long[] downloadParts = splitValueByWeights(edgeTask.getOutputFileSize(), flatWeights);
+
+		Deque<List<TaskProperty>> dagLayers = new ArrayDeque<List<TaskProperty>>(layerSizes.length);
+		int childIndex = 0;
+		for (int layerSize : layerSizes) {
+			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
+			for (int i = 0; i < layerSize; i++) {
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
+				childIndex++;
+			}
+			dagLayers.add(layerProperties);
+		}
+
+		return dagLayers;
+	}
+
 	private long[] splitValue(long total, int parts) {
 		long[] values = new long[parts];
 		long base = parts == 0 ? total : total / parts;
 		long remainder = parts == 0 ? 0 : total % parts;
 		for (int i = 0; i < parts; i++) {
 			values[i] = base + (i < remainder ? 1 : 0);
+		}
+		return values;
+	}
+
+	/**
+	 * Splits total into len(weights) parts proportional to weights (which must sum to
+	 * 1.0, as validated by SimSettings.parseDagPartitionWeights), exactly conserving
+	 * total: each part is floor(total * weight), then any leftover units (lost to
+	 * flooring) are handed out one-by-one to the parts with the largest fractional
+	 * remainder first (largest-remainder/Hare-Niemeyer apportionment) - same
+	 * exact-total guarantee as splitValue's even-split remainder handling.
+	 */
+	private long[] splitValueByWeights(long total, double[] weights) {
+		int parts = weights.length;
+		long[] values = new long[parts];
+		double[] fractional = new double[parts];
+		long allocated = 0;
+		for (int i = 0; i < parts; i++) {
+			double exact = total * weights[i];
+			values[i] = (long) Math.floor(exact);
+			fractional[i] = exact - values[i];
+			allocated += values[i];
+		}
+
+		Integer[] order = new Integer[parts];
+		for (int i = 0; i < parts; i++) {
+			order[i] = i;
+		}
+		Arrays.sort(order, (a, b) -> Double.compare(fractional[b], fractional[a]));
+
+		long remainder = total - allocated;
+		for (int i = 0; i < remainder; i++) {
+			values[order[i]]++;
 		}
 		return values;
 	}

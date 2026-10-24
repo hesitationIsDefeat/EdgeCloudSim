@@ -20,6 +20,21 @@
 	     instead splits the total equally among LAYERS first, then equally again among
 	     each layer's own sub-tasks, so sub-tasks in a smaller layer get a bigger
 	     individual share than sub-tasks in a bigger layer.
+	     dag_partition_weights (optional) gives each node of each layer an explicit
+	     fraction of the task's total instead of an even EQUAL/LAYER_EQUAL split - it is
+	     only CONSULTED when partition_strategy (or a per-run override, e.g. tutorial15's
+	     "FULL_WEIGHTED" policy) is SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED; it has NO
+	     effect on EQUAL/LAYER_EQUAL runs ("FULL"/"FULL_LAYERED") of the same app. A layer
+	     with exactly one node is a bare number, a layer with 2+ nodes must be
+	     parenthesized with exactly that many comma-separated values (same per-layer
+	     order as dag_layers), and every value across the whole DAG must sum to 1.0 - see
+	     PROJECT_STATUS.md §6.3d and SimSettings.parseDagPartitionWeights(). Here
+	     0.1, (0.4, 0.4), 0.1 gives the entry node 10%, the two second-layer nodes
+	     40%/40%, and the final node 10% of the task's length/upload/download. A
+	     "FULL_(<weights>)" policy entry (e.g. "FULL_(0.1,(0.2,0.6),0.1)") instead
+	     encodes its OWN weights directly in the policy name - same syntax, but read via
+	     SimSettings.setTaskPartitionWeightsOverride() instead of this tag, which it
+	     ignores for that run (see MainApp.FULL_WEIGHTED_PREFIX).
 	     vm_utilization_on_edge (120%, deliberately >100) is sized so a single
 	     unpartitioned task (task_partition_policies=NO) can NEVER fit on an edge VM
 	     (structurally guaranteed REJECTED_DUE_TO_VM_CAPACITY, same convention as
@@ -42,6 +57,7 @@
 	<application name="DAG_WORKFLOW">
 		<usage_percentage>100</usage_percentage>
 		<dag_layers>1,2,1</dag_layers>
+		<dag_partition_weights>0.1, (0.4, 0.4), 0.1</dag_partition_weights>
 		<partition_strategy>EQUAL</partition_strategy>
 		<prob_cloud_selection>5</prob_cloud_selection>
 		<poisson_interarrival>167</poisson_interarrival>

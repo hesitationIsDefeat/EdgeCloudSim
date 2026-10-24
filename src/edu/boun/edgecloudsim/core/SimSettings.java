@@ -17,6 +17,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -134,6 +136,23 @@ public class SimSettings {
 	 * gives every sub-task in the whole DAG an identical share regardless of which
 	 * layer it belongs to. */
 	public static final String DAG_PARTITION_STRATEGY_LAYER_EQUAL = "LAYER_EQUAL";
+	/** ONAT: a DAG partition_strategy value that uses the app's explicit
+	 * dag_partition_weights (see isTaskDagPartitionWeighted()/getTaskDagPartitionWeights())
+	 * instead of an even EQUAL/LAYER_EQUAL split - only meaningful (and only read) when
+	 * selected as the active strategy/override; an app's dag_partition_weights tag has
+	 * NO effect unless this strategy is actually selected, so e.g. tutorial15's "FULL"/
+	 * "FULL_LAYERED" policies stay exactly as they were even if the app also defines
+	 * dag_partition_weights for a separate "FULL_WEIGHTED" policy to use. */
+	public static final String DAG_PARTITION_STRATEGY_WEIGHTED = "WEIGHTED";
+	// ONAT: per-run override of the actual weight VALUES used by DAG_PARTITION_STRATEGY_
+	// WEIGHTED - lets a policy name encode its own weights (e.g. tutorial15's
+	// "FULL_(0.1,(0.4,0.4),0.1)", parsed by MainApp) instead of only ever reading an
+	// app's applications.xml dag_partition_weights. Raw text (parsed lazily per task
+	// type via getTaskPartitionWeightsOverride(), since validation needs that task
+	// type's own dag_layers) - null means "no override", i.e. fall back to the app's
+	// own dag_partition_weights. Same override-then-fallback convention as
+	// currentTaskPartitionStrategyOverride/currentPartitionCountOverride.
+	private String currentTaskPartitionWeightsOverride = null;
 	private String MEETING_POINT_ASSIGNMENT_POLICY;
 
 	// ONAT: SAR (Search & Rescue) team parameters (tutorial8). Defaulted to 0/empty
@@ -194,6 +213,15 @@ public class SimSettings {
 	 * starts once every sub-task in layer L-1 has completed. null when taskDagEnabled[i]
 	 * is false. */
 	private int[][] taskDagLayers = null;
+	/** ONAT: per-task-type explicit per-node partition weight fractions (see
+	 * dag_partition_weights in applications.xml), in dependency order and matching
+	 * taskDagLayers[i]'s per-layer node counts exactly - taskDagPartitionWeights[i][L][n]
+	 * is the fraction of the WHOLE task's length/upload/download given to node n of
+	 * layer L. null when the app doesn't define dag_partition_weights (falls back to
+	 * getTaskPartitionStrategy()'s EQUAL/LAYER_EQUAL split instead). Every value across
+	 * the whole DAG is validated (at parse time) to sum to 1.0 - see
+	 * parseDagPartitionWeights()/DefaultMobileDeviceManager.splitTaskPropertyIntoDagLayersByWeight. */
+	private double[][][] taskDagPartitionWeights = null;
 	/** ONAT: per-app hard task-timeout (seconds, see task_timeout in applications.xml) -
 	 * a task of this type still in flight this long after its own creation is
 	 * force-cancelled (see DefaultMobileDeviceManager's TASK_TIMEOUT handling).
@@ -289,7 +317,11 @@ public class SimSettings {
 			// ONAT: falls back to UAV_MOBILITY_INTERVAL if not explicitly set, so tutorials that
 			// don't use a centralized controller are unaffected.
 			CENTRALIZED_CONTROLLER_INTERVAL = Double.parseDouble(prop.getProperty("centralized_controller_interval", String.valueOf(UAV_MOBILITY_INTERVAL))); //seconds
-			TASK_PARTITION_POLICIES = prop.getProperty("task_partition_policies", "FULL").split(",");
+			// ONAT: paren-aware split (not a naive .split(",")) so a policy entry that
+			// encodes its own weights (e.g. tutorial15's "FULL_(0.1,(0.4,0.4),0.1)") isn't
+			// shredded by the commas inside it - see splitTopLevelCommaList().
+			TASK_PARTITION_POLICIES = splitTopLevelCommaList(prop.getProperty("task_partition_policies", "FULL"))
+					.toArray(new String[0]);
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
@@ -802,6 +834,45 @@ public class SimSettings {
 				? null : partitionStrategy.trim().toUpperCase();
 	}
 
+	/** ONAT: overrides the WEIGHT VALUES used by DAG_PARTITION_STRATEGY_WEIGHTED for the
+	 * current run (e.g. tutorial15's "FULL_(0.1,(0.4,0.4),0.1)" policy), instead of
+	 * reading the app's own applications.xml dag_partition_weights - same syntax as that
+	 * tag (see parseDagPartitionWeights()). Pass null/empty to clear the override and
+	 * fall back to the app's own dag_partition_weights. Validated EAGERLY here (against
+	 * every DAG-enabled task type) rather than lazily on first use, so a malformed
+	 * override (wrong layer/node count, bad sum) fails immediately when a sweep entry
+	 * sets it (e.g. right at the top of MainApp's sweep loop) instead of only once a DAG
+	 * task happens to be submitted deep into a run. */
+	public void setTaskPartitionWeightsOverride(String weightsText)
+	{
+		currentTaskPartitionWeightsOverride = (weightsText == null || weightsText.trim().isEmpty())
+				? null : weightsText.trim();
+		if (currentTaskPartitionWeightsOverride != null) {
+			for (int t = 0; t < taskDagEnabled.length; t++) {
+				if (taskDagEnabled[t])
+					parseDagPartitionWeights("<partition-weights override>", currentTaskPartitionWeightsOverride, taskDagLayers[t]);
+			}
+		}
+	}
+
+	/** ONAT: true if a per-run weights override (see setTaskPartitionWeightsOverride())
+	 * is currently active. */
+	public boolean isTaskPartitionWeightsOverrideActive()
+	{
+		return currentTaskPartitionWeightsOverride != null;
+	}
+
+	/** ONAT: parses/validates the active weights override (see
+	 * setTaskPartitionWeightsOverride()) against taskType's own dag_layers - same
+	 * validation as applications.xml's dag_partition_weights (layer/node counts must
+	 * match, every value positive, whole-DAG sum 1.0). Only valid when
+	 * isTaskPartitionWeightsOverrideActive() is true. */
+	public double[][] getTaskPartitionWeightsOverride(int taskType)
+	{
+		return parseDagPartitionWeights("<partition-weights override>", currentTaskPartitionWeightsOverride,
+				taskDagLayers[taskType]);
+	}
+
 	public double getNorthernBound() {
 		return NORTHERN_BOUND;
 	}
@@ -934,6 +1005,23 @@ public class SimSettings {
 		return taskDagLayers[taskType];
 	}
 
+	/** ONAT: true if this task type's DAG defines explicit per-node partition weights
+	 * (applications.xml's dag_partition_weights) instead of using an even EQUAL/
+	 * LAYER_EQUAL split - see getTaskDagPartitionWeights(). */
+	public boolean isTaskDagPartitionWeighted(int taskType)
+	{
+		return taskDagPartitionWeights[taskType] != null;
+	}
+
+	/** ONAT: per-layer, per-node partition weight fractions for this task type's DAG,
+	 * in dependency order (layer 0 first) matching getTaskDagLayers()'s per-layer node
+	 * counts exactly - every value across the whole DAG sums to 1.0 (validated at parse
+	 * time). Only valid when isTaskDagPartitionWeighted(taskType) is true. */
+	public double[][] getTaskDagPartitionWeights(int taskType)
+	{
+		return taskDagPartitionWeights[taskType];
+	}
+
 	/**
 	 * Validates that a required attribute exists in an XML element.
 	 * Throws exception if the attribute is missing or empty.
@@ -982,6 +1070,87 @@ public class SimSettings {
 		return result;
 	}
 
+	/**
+	 * Splits text on top-level commas only - any comma nested inside parentheses is
+	 * kept as part of its enclosing token, regardless of paren "type"/matching (depth
+	 * is simply incremented on every '(' and decremented on every ')'). Used both for
+	 * applications.xml's dag_partition_weights tag and for task_partition_policies
+	 * entries that encode their own weights in the policy name itself (e.g.
+	 * "FULL_(0.1,(0.4,0.4),0.1)"), so such an entry survives as ONE policy string
+	 * instead of being shredded by a naive comma split.
+	 */
+	private static List<String> splitTopLevelCommaList(String text) {
+		List<String> tokens = new ArrayList<String>();
+		int depth = 0;
+		StringBuilder current = new StringBuilder();
+		for (char c : text.toCharArray()) {
+			if (c == '(') depth++;
+			if (c == ')') depth--;
+			if (c == ',' && depth == 0) {
+				tokens.add(current.toString().trim());
+				current.setLength(0);
+			} else {
+				current.append(c);
+			}
+		}
+		if (current.toString().trim().length() > 0) {
+			tokens.add(current.toString().trim());
+		}
+		return tokens;
+	}
+
+	/**
+	 * Parses an applications.xml dag_partition_weights tag into a per-layer array of
+	 * per-node weight fractions (same layer order/sizes as dag_layers) - e.g. the text
+	 * "0.1, (0.5, 0.3), 0.1" for a 1,2,1 DAG becomes {{0.1}, {0.5, 0.3}, {0.1}}. A
+	 * layer with exactly one node may be written as a bare number (no parens); a layer
+	 * with 2+ nodes MUST be parenthesized with exactly that many comma-separated
+	 * values. Validates the per-layer node counts match layerSizes and that every
+	 * weight across the WHOLE dag sums to 1.0 (within a small epsilon), throwing
+	 * IllegalArgumentException (caught by parseApplicationsXML's try/catch, which
+	 * terminates the simulation with a clear message) otherwise.
+	 */
+	private double[][] parseDagPartitionWeights(String taskName, String text, int[] layerSizes) {
+		List<String> tokens = splitTopLevelCommaList(text);
+
+		if (tokens.size() != layerSizes.length) {
+			throw new IllegalArgumentException("App '" + taskName + "': dag_partition_weights has "
+					+ tokens.size() + " layer entries but dag_layers defines " + layerSizes.length + " layers");
+		}
+
+		double[][] weights = new double[layerSizes.length][];
+		double total = 0;
+		for (int l = 0; l < tokens.size(); l++) {
+			String token = tokens.get(l);
+			String[] valueTokens = (token.startsWith("(") && token.endsWith(")"))
+					? token.substring(1, token.length() - 1).split(",")
+					: new String[] { token };
+
+			if (valueTokens.length != layerSizes[l]) {
+				throw new IllegalArgumentException("App '" + taskName + "': dag_partition_weights layer " + l
+						+ " has " + valueTokens.length + " value(s) but dag_layers defines " + layerSizes[l]
+						+ " node(s) for that layer");
+			}
+
+			weights[l] = new double[valueTokens.length];
+			for (int n = 0; n < valueTokens.length; n++) {
+				double weight = Double.parseDouble(valueTokens[n].trim());
+				if (weight <= 0) {
+					throw new IllegalArgumentException("App '" + taskName + "': dag_partition_weights layer " + l
+							+ " node " + n + " must be a positive number, got " + weight);
+				}
+				weights[l][n] = weight;
+				total += weight;
+			}
+		}
+
+		if (Math.abs(total - 1.0) > 1e-6) {
+			throw new IllegalArgumentException("App '" + taskName + "': dag_partition_weights values must add up to 1.0, got " + total);
+		}
+
+		return weights;
+	}
+
 	private void parseApplicationsXML(String filePath)
 	{
 		Document doc = null;
@@ -1020,6 +1189,7 @@ public class SimSettings {
 			taskPartitionStrategy = new String[appList.getLength()];
 			taskDagEnabled = new boolean[appList.getLength()];
 			taskDagLayers = new int[appList.getLength()][];
+			taskDagPartitionWeights = new double[appList.getLength()][][];
 			taskTimeout = new double[appList.getLength()];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
@@ -1033,6 +1203,7 @@ public class SimSettings {
 				taskPartitionStrategy[i] = "EQUAL";
 				taskDagEnabled[i] = false;
 				taskDagLayers[i] = null;
+				taskDagPartitionWeights[i] = null;
 				taskTimeout[i] = 0;
 				if(checkElement(appElement, "partitionable"))
 					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
@@ -1063,6 +1234,22 @@ public class SimSettings {
 					taskDagLayers[i] = layers;
 					taskPartitionable[i] = true;
 					taskPartitionCount[i] = totalSubtaskCount;
+
+					// ONAT: dag_partition_weights (e.g. "0.1, (0.5, 0.3), 0.1" for a
+					// 1,2,1 DAG) gives each node of each layer an explicit fraction of
+					// the whole task's length/upload/download instead of an even split -
+					// a layer with exactly one node may be written as a bare number, a
+					// layer with 2+ nodes must be parenthesized with exactly that many
+					// comma-separated values. Optional - takes precedence over
+					// partition_strategy for this app when present (see
+					// DefaultMobileDeviceManager.splitTaskPropertyIntoDagLayers).
+					if(checkElement(appElement, "dag_partition_weights")) {
+						String weightsText = appElement.getElementsByTagName("dag_partition_weights").item(0).getTextContent();
+						taskDagPartitionWeights[i] = parseDagPartitionWeights(taskName, weightsText, layers);
+					}
+				}
+				else if(checkElement(appElement, "dag_partition_weights")) {
+					throw new IllegalArgumentException("dag_partition_weights requires dag_layers to be set for app '" + taskName + "'");
 				}
 
 				for(int m=0; m<mandatoryAttributes.length; m++){

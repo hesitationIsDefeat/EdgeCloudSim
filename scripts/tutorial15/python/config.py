@@ -25,13 +25,40 @@ _BW_MARKER_PALETTE = ['-k*', '-ko', '-kv', '-ks', '-k^', '-kd']
 _COLOR_MARKER_PALETTE = ['-*', '-o', '-v', '-s', '-^', '-d']
 
 
+def _split_top_level_commas(text):
+    """
+    Splits text on top-level commas only - any comma nested inside parentheses is kept
+    as part of its enclosing token (depth incremented on '(', decremented on ')',
+    regardless of paren "type"/matching). Mirrors SimSettings.splitTopLevelCommaList()
+    on the Java side - needed so a task_partition_policies entry that encodes its own
+    weights in the policy name (e.g. "FULL_(0.1,(0.2,0.6),0.1)") survives as ONE token
+    instead of being shredded by a naive str.split(',').
+    """
+    tokens = []
+    depth = 0
+    current = ''
+    for c in text:
+        if c == '(':
+            depth += 1
+        if c == ')':
+            depth -= 1
+        if c == ',' and depth == 0:
+            tokens.append(current.strip())
+            current = ''
+        else:
+            current += c
+    if current.strip():
+        tokens.append(current.strip())
+    return tokens
+
+
 def _parse_task_partition_policies(properties_path):
     """Reads the comma separated task_partition_policies list from default_config.properties."""
     with open(properties_path, 'r') as f:
         for line in f:
             line = line.strip()
             if line.startswith('task_partition_policies='):
-                return [opt.strip().upper() for opt in line.split('=', 1)[1].split(',') if opt.strip()]
+                return [opt.upper() for opt in _split_top_level_commas(line.split('=', 1)[1]) if opt]
     raise ValueError(f"task_partition_policies not found in {properties_path}")
 
 
@@ -74,24 +101,35 @@ _LEGEND_NAMES = {
     'NO': 'Not Partitioned',
     'FULL': 'DAG Partitioned (Equal)',
     'FULL_LAYERED': 'DAG Partitioned (Layer-Equal)',
+    'FULL_WEIGHTED': 'DAG Partitioned (Weighted)',
 }
 
 _PARTITION_POLICY_PATTERN = re.compile(r'PARTITION_(\d+)')
+# ONAT: matches a policy that encodes its own dag_partition_weights directly in the
+# name (e.g. "FULL_(0.1,(0.2,0.6),0.1)") - see SimSettings.setTaskPartitionWeightsOverride()/
+# MainApp.FULL_WEIGHTED_PREFIX. DOTALL not needed since the weights spec never contains
+# a newline; '.+' is deliberately greedy (not lazy) to grab the whole parenthesized spec
+# including any inner parens.
+_FULL_WEIGHTED_OVERRIDE_PATTERN = re.compile(r'FULL_\((.+)\)$')
 
 
 def _make_legend(scenario_type):
-    """Turns 'NO'/'FULL' into 'Not Partitioned'/'DAG Partitioned', and
-    'PARTITION_4'/'PARTITION_7' into '4 Partitions (Flat)'/'7 Partitions (Flat)' -
-    the "(Flat)" suffix distinguishes these from FULL's dependent-layer split, since
-    both can have the same child count (e.g. PARTITION_7) yet differ in whether
-    children are submitted all at once or in dependent waves."""
+    """Turns 'NO'/'FULL' into 'Not Partitioned'/'DAG Partitioned',
+    'PARTITION_4'/'PARTITION_7' into '4 Partitions (Flat)'/'7 Partitions (Flat)' - the
+    "(Flat)" suffix distinguishes these from FULL's dependent-layer split, since both
+    can have the same child count (e.g. PARTITION_7) yet differ in whether children are
+    submitted all at once or in dependent waves - and 'FULL_(0.1,(0.2,0.6),0.1)' into
+    'DAG Partitioned (Weighted: 0.1,(0.2,0.6),0.1)'."""
     if scenario_type in _LEGEND_NAMES:
         return _LEGEND_NAMES[scenario_type]
     match = _PARTITION_POLICY_PATTERN.match(scenario_type)
-    if not match:
-        return scenario_type
-    count = int(match.group(1))
-    return f'{count} Partition (Flat)' if count == 1 else f'{count} Partitions (Flat)'
+    if match:
+        count = int(match.group(1))
+        return f'{count} Partition (Flat)' if count == 1 else f'{count} Partitions (Flat)'
+    match = _FULL_WEIGHTED_OVERRIDE_PATTERN.match(scenario_type)
+    if match:
+        return f'DAG Partitioned (Weighted: {match.group(1)})'
+    return scenario_type
 
 
 def _load_tutorial_display_name(tutorial_key):
