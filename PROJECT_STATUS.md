@@ -150,7 +150,7 @@ flowchart TB
 | `tutorial7` | Adds **task partitioning** on top of tutorial6 (sweeps `task_partition_policies` in `MainApp`; `applications.xml` apps carry `partitionable`/`partition_count`/`partition_strategy`). |
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
-| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task), swept against `task_partition_policies=NO,FULL,FULL_LAYERED,PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
+| `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task) and `dag_partition_weights=0.1, (0.4, 0.4), 0.1`, swept against `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `FULL_WEIGHTED` runs the SAME real layered DAG but split per the app's explicit `dag_partition_weights`, via a `partition_strategy` override to `DAG_PARTITION_STRATEGY_WEIGHTED` - see §6.3d; `FULL_(<weights>)` runs the SAME real layered DAG but split per weights encoded directly in the policy name itself, ignoring the app's own `dag_partition_weights` for that run - see §6.3d point 5; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b/§6.3d. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -356,6 +356,79 @@ the next layer executes, so layer transitions aren't instantaneous.
    `SimLogger`'s `uavDelay`/`uavUsage` arrays: averaged into the console summary line
    ("UAV delay: ...") and appended as a TRAILING field on `genericResult5`'s CSV line
    (existing column positions for other tutorials are untouched).
+
+### 6.3d Explicit per-node DAG partition weights (`dag_partition_weights`)
+Lets a DAG app give each node of each layer an explicit fraction of the task's total
+length/upload/download, instead of an even EQUAL/LAYER_EQUAL split (§6.3b).
+1. **Config**: `<dag_partition_weights>` in `applications.xml`, e.g. for a
+   `dag_layers=1,2,1` app: `0.1, (0.4, 0.4), 0.1` — a layer with exactly one node is a
+   bare number; a layer with 2+ nodes MUST be parenthesized with exactly that many
+   comma-separated values, in the same per-layer order as `dag_layers`. Requires
+   `dag_layers` to also be set (error otherwise). Every value across the WHOLE dag must
+   sum to 1.0 (checked at parse time, small epsilon tolerance) and every individual
+   value must be positive — `SimSettings.parseDagPartitionWeights()` throws
+   `IllegalArgumentException` (caught by `parseApplicationsXML`'s try/catch, which
+   terminates the simulation with a clear message) on any mismatch: wrong layer count,
+   wrong per-layer node count, non-positive value, or sum != 1.0. Optional — omitting the
+   tag leaves an app's existing `partition_strategy` (EQUAL/LAYER_EQUAL) behavior
+   unchanged.
+2. **Precedence (strategy-gated, not automatic)**: the weights are only CONSULTED when
+   `SimSettings.getTaskPartitionStrategy(taskType)` (the app's own `partition_strategy`,
+   or a per-run override) resolves to `SimSettings.DAG_PARTITION_STRATEGY_WEIGHTED`
+   (`"WEIGHTED"`) — `DefaultMobileDeviceManager.splitTaskPropertyIntoDagLayers` checks the
+   strategy string first, dispatching to `splitTaskPropertyIntoDagLayersByWeight` only in
+   that case (throwing `IllegalStateException` if that strategy is selected but the app
+   defines no `dag_partition_weights`). An app can therefore define
+   `dag_partition_weights` WITHOUT changing its existing `EQUAL`/`LAYER_EQUAL` runs —
+   tutorial15 demonstrates this via a third `"FULL_WEIGHTED"` policy (alongside `"FULL"`/
+   `"FULL_LAYERED"`) that overrides the strategy to `DAG_PARTITION_STRATEGY_WEIGHTED` for
+   that one sweep entry only — see `MainApp.FULL_WEIGHTED_POLICY` /
+   `setTaskPartitionStrategyOverride()`; `"FULL"`/`"FULL_LAYERED"` are completely
+   unaffected by `DAG_WORKFLOW` also defining `dag_partition_weights`.
+3. **Split mechanism**: `splitTaskPropertyIntoDagLayersByWeight` flattens the per-layer
+   weights (in dependency order) into one list and splits the task's total length/
+   upload/download in a single shot via `splitValueByWeights` — each part is
+   `floor(total * weight)`, then any leftover units lost to flooring are handed out one
+   at a time to the parts with the largest fractional remainder first (largest-remainder
+   / Hare-Niemeyer apportionment), exactly conserving the original total (same
+   exact-total guarantee as the EQUAL/LAYER_EQUAL strategies' `splitValue`).
+4. Smoke-tested: valid weights (`0.1, (0.4, 0.4), 0.1`) produce exactly proportional
+   per-node lengths (verified via temporary debug instrumentation, e.g. task total 10203
+   -> parts `[1020, 5102, 3061, 1020]`, summing back to 10203 exactly); an invalid sum
+   (1.1) and a wrong per-layer node count both cleanly terminate the simulation with a
+   descriptive `IllegalArgumentException` instead of a silent miscalculation or crash.
+   tutorial15's `DAG_WORKFLOW` now sets `dag_partition_weights` live (`0.1, (0.4, 0.4),
+   0.1`) and sweeps `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,
+   FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` — confirmed `FULL`/`FULL_LAYERED` are numerically
+   unaffected (only statistical run-to-run noise from independent sampling) and
+   `FULL_WEIGHTED`/`FULL_(...)` both run end-to-end with no exceptions.
+5. **Policy-name-encoded weights override** (`"FULL_(<weights>)"`, e.g.
+   `"FULL_(0.1,(0.2,0.6),0.1)"`): same "encode a parameter in the policy name"
+   convention as `PARTITION_<N>`/tutorial9's `VORONOI_<factor>` (§6.2 point 8) — lets a
+   sweep entry supply its OWN weight values directly, instead of only ever reading the
+   app's applications.xml `dag_partition_weights`. `SimSettings.
+   setTaskPartitionWeightsOverride(String)` stores the raw weights text (same syntax as
+   the XML tag) and EAGERLY validates it (right when the override is set, against every
+   currently DAG-enabled task type) — this is deliberately NOT lazy, so a malformed
+   override fails immediately at sweep-entry setup with a clear `IllegalArgumentException`,
+   rather than only once a DAG task happens to be submitted deep into a run.
+   `DefaultMobileDeviceManager.splitTaskPropertyIntoDagLayers`'s `WEIGHTED` branch checks
+   `SimSettings.isTaskPartitionWeightsOverrideActive()` FIRST — if active, uses
+   `getTaskPartitionWeightsOverride(taskType)` instead of the app's own
+   `getTaskDagPartitionWeights(taskType)`. Because `task_partition_policies` itself is a
+   comma-separated list, and a weights spec contains its own commas/parens,
+   `SimSettings` now splits that property with a paren-aware top-level tokenizer
+   (`splitTopLevelCommaList()`, shared with `parseDagPartitionWeights()`) instead of a
+   naive `.split(",")`, so an entry like `"FULL_(0.1,(0.2,0.6),0.1)"` survives as ONE
+   policy string. tutorial15's `MainApp` detects this via a `"FULL_("`-prefix/`")`-suffix
+   check (`FULL_WEIGHTED_PREFIX`), extracts the inner text, and calls both
+   `setTaskPartitionStrategyOverride(DAG_PARTITION_STRATEGY_WEIGHTED)` and
+   `setTaskPartitionWeightsOverride(innerText)` for that one sweep entry — every other
+   policy clears both overrides. Smoke-tested: the override's weights
+   (`[0.1, 0.2, 0.6, 0.1]`) were confirmed (via temporary debug instrumentation) to be
+   used instead of the app's own XML weights (`[0.1, 0.4, 0.4, 0.1]`, used unchanged by
+   `"FULL_WEIGHTED"` in the same run); a bad-sum and a wrong-node-count override both
+   correctly aborted immediately with a descriptive error.
 
 ### 6.4 New task/application type
 1. Add an `<application name="...">` block to `applications.xml` with the mandatory
