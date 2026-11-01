@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<applications>
+	<!-- ONAT: tutorial16's only application. Every user sends this one non-partitionable
+	     task to the single UAV (see edge_devices.xml: one single-core VM, 2500 MIPS).
+	     vm_utilization_on_edge is the value this tutorial is re-run with (default 30).
+	     It is ONLY a declared admission share (CpuUtilizationModel_Custom) - it does not
+	     change how fast a task executes (cloudlet length / VM mips, see
+	     CloudletSchedulerSpaceShared), and the VM runs one task at a time on its one core.
+	     UAVEdgeOrchestrator admits a task only if
+	         (running + waiting + reserved shares) + this task's share <= 100,
+	     so at most floor(100 / vm_utilization_on_edge) tasks (1 running, the rest queued)
+	     can be in the UAV at once: 30 -> 3 (2 queued), 25 -> 4, 10 -> 10, 100 -> 1 (no
+	     queue at all), >100 -> none is ever admitted. A task that does not fit is logged
+	     REJECTED_DUE_TO_VM_CAPACITY (failure reason 1); one sent from outside the UAV's
+	     service radius is logged REJECTED_DUE_TO_BANDWIDTH (reason 2).
+	     Offered load: task_length is the MEAN of an exponential distribution, so the mean
+	     service time is task_length / 2500 MIPS = 1 s. Each user sends one task every
+	     poisson_interarrival seconds on average, so with 100 users (see
+	     default_config.properties) the arrival rate is 100 / 100 = 1 task/s - an offered
+	     load of lambda x service time = 1.0. The UAV then behaves like an M/M/1/K queue
+	     with K = floor(100 / vm_utilization_on_edge): for K = 3 (the default) about
+	     1 / (K + 1) = 25% of tasks are rejected for VM capacity and a completed task
+	     spends about 1 s waiting (2 s total). Change the number of users or
+	     poisson_interarrival to load the UAV more or less.
+	     prob_cloud_selection is unused (UAVEdgeOrchestrator only ever picks the edge) and
+	     task_timeout is left disabled since the admission limit already bounds the queue. -->
+	<application name="QUEUE_TASK">
+		<usage_percentage>100</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>100</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<!-- ONAT: idle_period=0 removes the ON/OFF duty-cycle entirely (active windows
+		     become back-to-back with no gap) so task arrivals are a single continuous
+		     Poisson process at rate 1/poisson_interarrival per user. -->
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2500</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>30</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>
