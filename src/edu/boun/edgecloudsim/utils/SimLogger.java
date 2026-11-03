@@ -43,6 +43,7 @@ import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.core.SimSettings.NETWORK_DELAY_TYPES;
 import edu.boun.edgecloudsim.utils.SimLogger.NETWORK_ERRORS;
+import org.cloudbus.cloudsim.core.CloudSim;
 
 /**
  * Comprehensive simulation logging and result collection system for EdgeCloudSim.
@@ -514,7 +515,11 @@ public class SimLogger {
 	 * @param delayType type of network segment causing the delay
 	 */
 	public void setDownloadDelay(int taskId, double delay, NETWORK_DELAY_TYPES delayType) {
-		taskMap.get(taskId).setDownloadDelay(delay, delayType);
+		// ONAT: a plain task that already timed out has been recorded (and removed from
+		// the map) while its cloudlet kept running - nothing left to record for it.
+		LogItem item = taskMap.get(taskId);
+		if (item != null)
+			item.setDownloadDelay(delay, delayType);
 	}
 
 	/**
@@ -539,7 +544,10 @@ public class SimLogger {
 	 * @param vmType type/tier of the processing environment (cloud/edge/mobile)
 	 */
 	public void taskAssigned(int taskId, int datacenterId, int hostId, int vmId, int vmType) {
-		taskMap.get(taskId).taskAssigned(datacenterId, hostId, vmId, vmType);
+		// ONAT: ignored for an already recorded (e.g. timed-out) task, see setDownloadDelay()
+		LogItem item = taskMap.get(taskId);
+		if (item != null)
+			item.taskAssigned(datacenterId, hostId, vmId, vmType);
 	}
 
 	/**
@@ -548,7 +556,10 @@ public class SimLogger {
 	 * @param taskId unique identifier for the task
 	 */
 	public void taskExecuted(int taskId) {
-		taskMap.get(taskId).taskExecuted();
+		// ONAT: ignored for an already recorded (e.g. timed-out) task, see setDownloadDelay()
+		LogItem item = taskMap.get(taskId);
+		if (item != null)
+			item.taskExecuted();
 	}
 
 	/**
@@ -1504,6 +1515,12 @@ class LogItem {
 		networkError = NETWORK_ERRORS.NONE;
 		status = SimLogger.TASK_STATUS.CREATED;
 		taskEndTime = 0;
+
+		// ONAT: taskStarted() is the only other place this flag is set, and it is never
+		// reached by a task rejected before its upload begins (e.g. out of every UAV's
+		// service radius) - without this such a task would keep the default (false) and be
+		// counted as a failure even when it was created during the warm-up period.
+		isInWarmUpPeriod = CloudSim.clock() < SimSettings.getInstance().getWarmUpPeriod();
 	}
 	
 	public void taskStarted(double time) {
