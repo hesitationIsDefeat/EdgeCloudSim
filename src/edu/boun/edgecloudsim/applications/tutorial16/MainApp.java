@@ -14,6 +14,7 @@
 //    3.1) For each mobile device population size
 //          3.1.1) For each simulation scenario
 //                  3.1.1.1) For each orchestrator policy
+//                  3.1.1.2) For each VM utilization policy
 //                             - Initialize CloudSim
 //                             - Build scenario factory
 //                             - Create SimManager
@@ -22,23 +23,27 @@
 // 4) Print total elapsed time
 
 // ONAT: tutorial16 studies how a single UAV's task queue behaves as a function of the
-// application's vm_utilization_on_edge (see applications.xml). Users and UAV mobility are
-// the same as tutorial15 (users converge on one meeting zone at the map center, the UAV
-// follows the K-Means centroid of the users), but there is exactly ONE UAV with ONE
-// single-core VM and ONE non-partitionable application, so every task contends for the
-// same queue. Nothing is swept inside a run: change vm_utilization_on_edge in
-// applications.xml and run again - the default (no-args) output folder embeds that value
-// (sim_results/tutorial16/util<value>/ite<N>), so runs with different values do not
-// overwrite each other.
+// application's vm_utilization_on_edge. Users and UAV mobility are the same as tutorial15
+// (users converge on one meeting zone at the map center, the UAV follows the K-Means
+// centroid of the users), but there is exactly ONE UAV with ONE single-core VM and ONE
+// non-partitionable application, so every task contends for the same queue. The utilization
+// values to compare are written as policy names in vm_utilization_policies
+// (default_config.properties), e.g. "UTILIZATION_10,UTILIZATION_30,UTILIZATION_50" - each
+// run overwrites the application's vm_utilization_on_edge with that percentage (see
+// UTILIZATION_POLICY_PATTERN and SimSettings.setEdgeVmUtilization()), same "encode a
+// parameter in the policy name" convention as tutorial14's PARTITION_<N>, so all of them
+// end up as separate lines in the same plot. applications.xml's own value is only a
+// placeholder.
 
 package edu.boun.edgecloudsim.applications.tutorial16;
 
 import java.io.File;
-import java.math.BigDecimal;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.CloudSim;
@@ -54,8 +59,10 @@ public class MainApp {
     public static final int EXPECTED_NUM_OF_ARGS = 5;
     public static final String APPLICATION_FOLDER = "tutorial16";
 
-    // Column of vm_utilization_on_edge in SimSettings.getTaskLookUpTable()
-    private static final int EDGE_VM_UTILIZATION_INDEX = 9;
+    // ONAT: a "UTILIZATION_<percent>" entry in vm_utilization_policies sets every
+    // application's vm_utilization_on_edge to <percent> for that run (decimals allowed,
+    // e.g. UTILIZATION_2.5) - see SimSettings.setEdgeVmUtilization().
+    private static final Pattern UTILIZATION_POLICY_PATTERN = Pattern.compile("UTILIZATION_(\\d+(?:\\.\\d+)?)");
 
     /**
      * Creates main() to run this example
@@ -122,16 +129,25 @@ public class MainApp {
         // bare PRIORITY_KMEANS) - taken once here rather than swept in the loop below.
         String uavMobilityOption = SS.getUAVMobilityOptions()[0];
 
-        // ONAT: this tutorial has exactly one application; its declared edge VM CPU share
-        // (percent) is what the UAV orchestrator's admission check works with.
-        String edgeVmUtilization = BigDecimal.valueOf(SS.getTaskLookUpTable()[0][EDGE_VM_UTILIZATION_INDEX])
-                .stripTrailingZeros().toPlainString();
+        // ONAT: the utilization policies to compare, validated up front so a typo fails
+        // immediately instead of after the first few scenarios have already run.
+        String[] utilizationPolicies = SS.getVmUtilizationPolicies();
+        if (utilizationPolicies.length == 0) {
+            SimLogger.printLine("vm_utilization_policies is not set in " + configFile + "! Terminating simulation...");
+            System.exit(1);
+        }
+        for (String policy : utilizationPolicies) {
+            if (!UTILIZATION_POLICY_PATTERN.matcher(policy.trim().toUpperCase()).matches()) {
+                SimLogger.printLine("Unknown vm_utilization_policies entry '" + policy + "' (expected UTILIZATION_<percent>, e.g. UTILIZATION_30)! Terminating simulation...");
+                System.exit(1);
+            }
+        }
 
         // For each iteration specified by the user or default range
         for(int iterationNumber=iterationStart; iterationNumber<=iterationEnd; iterationNumber++) {
             // Derive output folder automatically when not explicitly provided
             if (args.length != EXPECTED_NUM_OF_ARGS)
-                outputFolder = "sim_results/" + APPLICATION_FOLDER + "/util" + edgeVmUtilization + "/ite" + iterationNumber;
+                outputFolder = "sim_results/" + APPLICATION_FOLDER + "/ite" + iterationNumber;
 
             if(SS.getFileLoggingEnabled()){
                 // File logging enabled -> ensure clean slate for this iteration
@@ -170,57 +186,70 @@ public class MainApp {
                     // Evaluate each orchestrator policy under the active scenario
                     for(int i=0; i<SS.getOrchestratorPolicies().length; i++)
                     {
-                        // Extract current test dimensions
-                        String simScenario = SS.getSimulationScenarios()[k];
-                        String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
-
-                        Date ScenarioStartDate = Calendar.getInstance().getTime();
-                        now = df.format(ScenarioStartDate);
-
-                        // Log scenario header summarizing experimental factors
-                        SimLogger.printLine("Scenario started at " + now);
-                        SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - UAV Mobility: " + uavMobilityOption + " - Edge VM Utilization: " + edgeVmUtilization + "% - #iteration: " + iterationNumber);
-                        SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #users: " + j);
-                        // Warm-up period: tasks started during it are excluded from the result statistics.
-                        SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + j + "DEVICES");
-
-                        try
+                        // Evaluate each VM utilization policy under the active scenario
+                        for(int p=0; p<utilizationPolicies.length; p++)
                         {
-                            // Minimal event granularity (0.01) chosen to avoid zero-time collisions
-                            // CloudSim core init:
-                            // num_user: logical users generating events (broker etc.)
-                            // calendar: base time reference
-                            // trace_flag: enable event tracing (disabled for performance)
-                            // last param: minimal time between events (precision)
-                            int num_user = 2;   // number of grid users
-                            Calendar calendar = Calendar.getInstance();
-                            boolean trace_flag = false;  // mean trace events
+                            // Extract current test dimensions
+                            String simScenario = SS.getSimulationScenarios()[k];
+                            String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
+                            String utilizationPolicy = utilizationPolicies[p].trim().toUpperCase();
 
-                            // Initialize the CloudSim library
-                            CloudSim.init(num_user, calendar, trace_flag, 0.01);
+                            // ONAT: every run overwrites the application's declared edge VM CPU share
+                            // (what the UAV orchestrator's admission check works with) with the
+                            // policy's percentage - pattern validity was checked above.
+                            Matcher utilizationMatcher = UTILIZATION_POLICY_PATTERN.matcher(utilizationPolicy);
+                            utilizationMatcher.matches();
+                            double edgeVmUtilization = Double.parseDouble(utilizationMatcher.group(1));
+                            SS.setEdgeVmUtilization(edgeVmUtilization);
 
-                            // ScenarioFactory encapsulates workload, mobility, network, placement etc.
-                            ScenarioFactory sampleFactory = new SampleScenarioFactory(j, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
+                            Date ScenarioStartDate = Calendar.getInstance().getTime();
+                            now = df.format(ScenarioStartDate);
 
-                            // SimManager wires all components, schedules events, and aggregates stats.
-                            SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
-                            // Kick off discrete-event simulation (blocking until completion)
-                            manager.startSimulation();
-                        }
-                        catch (Exception e)
-                        {
-                            // Crash-fast strategy prevents partial mixed-result datasets
-                            // Any uncaught exception here invalidates experimental run
-                            SimLogger.printLine("The simulation has been terminated due to an unexpected error");
-                            e.printStackTrace();
-                            System.exit(0);
-                        }
+                            // Log scenario header summarizing experimental factors
+                            SimLogger.printLine("Scenario started at " + now);
+                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - VM Utilization Policy: " + utilizationPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
+                            SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #users: " + j);
+                            // Warm-up period: tasks started during it are excluded from the result statistics.
+                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + utilizationPolicy + "_" + j + "DEVICES");
 
-                        // Log per-scenario duration (excludes previous scenarios)
-                        Date ScenarioEndDate = Calendar.getInstance().getTime();
-                        now = df.format(ScenarioEndDate);
-                        SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
-                        SimLogger.printLine("----------------------------------------------------------------------");
+                            try
+                            {
+                                // Minimal event granularity (0.01) chosen to avoid zero-time collisions
+                                // CloudSim core init:
+                                // num_user: logical users generating events (broker etc.)
+                                // calendar: base time reference
+                                // trace_flag: enable event tracing (disabled for performance)
+                                // last param: minimal time between events (precision)
+                                int num_user = 2;   // number of grid users
+                                Calendar calendar = Calendar.getInstance();
+                                boolean trace_flag = false;  // mean trace events
+
+                                // Initialize the CloudSim library
+                                CloudSim.init(num_user, calendar, trace_flag, 0.01);
+
+                                // ScenarioFactory encapsulates workload, mobility, network, placement etc.
+                                ScenarioFactory sampleFactory = new SampleScenarioFactory(j, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
+
+                                // SimManager wires all components, schedules events, and aggregates stats.
+                                SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
+                                // Kick off discrete-event simulation (blocking until completion)
+                                manager.startSimulation();
+                            }
+                            catch (Exception e)
+                            {
+                                // Crash-fast strategy prevents partial mixed-result datasets
+                                // Any uncaught exception here invalidates experimental run
+                                SimLogger.printLine("The simulation has been terminated due to an unexpected error");
+                                e.printStackTrace();
+                                System.exit(0);
+                            }
+
+                            // Log per-scenario duration (excludes previous scenarios)
+                            Date ScenarioEndDate = Calendar.getInstance().getTime();
+                            now = df.format(ScenarioEndDate);
+                            SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
+                            SimLogger.printLine("----------------------------------------------------------------------");
+                        }//End of utilization policies loop
                     }//End of orchestrators loop
                 }//End of scenarios loop
             }//End of mobile devices loop
