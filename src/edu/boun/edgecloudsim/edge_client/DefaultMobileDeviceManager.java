@@ -51,9 +51,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	private static final int REQUEST_RECEIVED_BY_CLOUD = BASE + 1;
 	private static final int REQUEST_RECEIVED_BY_EDGE_DEVICE = BASE + 2;
 	private static final int RESPONSE_RECEIVED_BY_MOBILE_DEVICE = BASE + 3;
-	// ONAT: fires after a DAG layer's inter-layer relay delay has elapsed (see
-	// NetworkModel.getInterLayerDelay()) to actually submit the next layer's children -
-	// carries a PendingLayerSubmission as its event data.
+	// ONAT: fires after a DAG layer's inter-layer relay delay (if its results have to
+	// reach another UAV at all, see getInterLayerRelayDelay()) has elapsed to actually
+	// submit the next layer's children - carries a PendingLayerSubmission as its event data.
 	private static final int SUBMIT_NEXT_DAG_LAYER = BASE + 4;
 	// ONAT: fires SimSettings.getTaskTimeout(taskType) seconds after a top-level task's
 	// creation (see armTimeout()) to log it as TIMED_OUT if it's still in flight - does
@@ -109,10 +109,15 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	private static class PendingLayerSubmission {
 		private final int parentTaskId;
 		private final List<Task> childTasks;
+		// ONAT: the UAVs/VMs already chosen for childTasks (same order) when the previous
+		// layer finished - the relay delay depends on where they are, so they have to be
+		// known before the layer is actually submitted.
+		private final List<Vm> selectedVMs;
 
-		private PendingLayerSubmission(int parentTaskId, List<Task> childTasks) {
+		private PendingLayerSubmission(int parentTaskId, List<Task> childTasks, List<Vm> selectedVMs) {
 			this.parentTaskId = parentTaskId;
 			this.childTasks = childTasks;
+			this.selectedVMs = selectedVMs;
 		}
 	}
 
@@ -141,11 +146,12 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		private boolean isDag;
 		private int totalDagChildCount;
 		private Deque<List<TaskProperty>> remainingLayers;
-		// ONAT: sum of the CURRENTLY running DAG layer's children's output data (KB) -
-		// reset per layer in submitChildTaskBatch, used to simulate the delay of
-		// relaying that layer's combined result to wherever the next layer runs (see
-		// NetworkModel.getInterLayerDelay()). Unused for a flat (non-DAG) partition.
-		private long currentLayerOutputDataSum;
+		// ONAT: output data (KB) of the CURRENTLY running DAG layer's finished children,
+		// summed per UAV (host id) that produced it - reset per layer in
+		// submitChildTaskBatch. Used to work out how much of the layer's combined result has
+		// to be relayed to the UAVs the next layer runs on (see getInterLayerRelayDelay()).
+		// Unused for a flat (non-DAG) partition.
+		private final Map<Integer, Long> currentLayerOutputKbByHost;
 
 		private PartitionState(int parentTaskId, int totalChildren) {
 			this.parentTaskId = parentTaskId;
@@ -157,7 +163,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			this.isDag = false;
 			this.totalDagChildCount = totalChildren;
 			this.remainingLayers = null;
-			this.currentLayerOutputDataSum = 0;
+			this.currentLayerOutputKbByHost = new HashMap<Integer, Long>();
 		}
 	}
 
@@ -390,9 +396,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 						break;
 					}
 					partitionState.completedChildren++;
-					// ONAT: only meaningful for a DAG task (see currentLayerOutputDataSum) -
+					// ONAT: only meaningful for a DAG task (see currentLayerOutputKbByHost) -
 					// harmless no-op accumulation for a flat partition, which never reads it.
-					partitionState.currentLayerOutputDataSum += task.getCloudletOutputSize();
+					partitionState.currentLayerOutputKbByHost.merge(task.getAssociatedHostId(), task.getCloudletOutputSize(), Long::sum);
 					if (partitionState.completedChildren >= partitionState.totalChildren) {
 						if (partitionState.isDag && !partitionState.remainingLayers.isEmpty()) {
 							// Every sub-task in the current DAG layer just finished -
@@ -401,18 +407,25 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 							List<Task> nextLayerTasks = buildChildTasks(partitionState.parentTaskId,
 									partitionState.remainingLayers.poll(), partitionState.totalDagChildCount);
 
+							// ONAT: the next layer's UAVs are chosen now, since whether (and how
+							// much of) this finished layer's output has to be relayed to another
+							// UAV depends on where the next layer runs.
+							List<Vm> nextLayerVMs = SimManager.getInstance().getEdgeOrchestrator()
+									.getVmsToOffload(nextLayerTasks, SimSettings.GENERIC_EDGE_DEVICE_ID);
+
 							// ONAT: simulate the hand-off delay of relaying this finished
-							// layer's combined output to wherever the next layer will run
-							// (see NetworkModel.getInterLayerDelay()) - logged into the
-							// parent's own entry (both as its own UAV_DELAY category and,
-							// via getNetworkDelay()'s total, folded into the overall
-							// network delay/service time) and only THEN is the next layer
-							// actually submitted - not immediately.
-							double interLayerDelay = networkModel.getInterLayerDelay(
-									partitionState.currentLayerOutputDataSum, SimSettings.getInstance().getUavBandwidth());
-							SimLogger.getInstance().addInterLayerDelay(partitionState.parentTaskId, interLayerDelay);
+							// layer's output to the other UAVs the next layer runs on (zero if it
+							// already sits on every one of them) - logged into the parent's own
+							// entry (both as its own UAV_DELAY category and, via
+							// getNetworkDelay()'s total, folded into the overall network
+							// delay/service time) and only THEN is the next layer actually
+							// submitted.
+							double interLayerDelay = getInterLayerRelayDelay(
+									partitionState.currentLayerOutputKbByHost, nextLayerVMs, networkModel);
+							if (interLayerDelay > 0)
+								SimLogger.getInstance().addInterLayerDelay(partitionState.parentTaskId, interLayerDelay);
 							schedule(getId(), interLayerDelay, SUBMIT_NEXT_DAG_LAYER,
-									new PendingLayerSubmission(partitionState.parentTaskId, nextLayerTasks));
+									new PendingLayerSubmission(partitionState.parentTaskId, nextLayerTasks, nextLayerVMs));
 						}
 						else {
 							// Roll up every child's upload/download delay into the parent's
@@ -448,7 +461,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				if (partitionState == null || partitionState.failed) {
 					break;
 				}
-				submitChildTaskBatch(pending.parentTaskId, partitionState, pending.childTasks, networkModel);
+				submitChildTaskBatch(pending.parentTaskId, partitionState, pending.childTasks, pending.selectedVMs, networkModel);
 				break;
 			}
 			default:
@@ -666,17 +679,27 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	 * hand-off (later layers).
 	 */
 	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, NetworkModel networkModel) {
+		submitChildTaskBatch(parentTaskId, partitionState, childTasks, null, networkModel);
+	}
+
+	/**
+	 * Same as above, but with the batch's VMs already chosen by the caller (same order as
+	 * childTasks) - null means "select them here". A DAG layer after the first has its VMs
+	 * chosen as soon as the previous layer finishes (see getInterLayerRelayDelay()).
+	 */
+	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, List<Vm> preselectedVMs, NetworkModel networkModel) {
 		partitionState.completedChildren = 0;
 		partitionState.totalChildren = childTasks.size();
-		partitionState.currentLayerOutputDataSum = 0;
+		partitionState.currentLayerOutputKbByHost.clear();
 
 		// Select the target VM/UAV for every sibling sub-task at the same time so
 		// the orchestrator can account for the cumulative load the whole batch
 		// will place on shared UAVs before any of them are actually bound -
 		// otherwise each selection would be blind to the load its just-chosen
 		// siblings are about to add to the same UAV.
-		List<Vm> selectedVMs = SimManager.getInstance().getEdgeOrchestrator()
-				.getVmsToOffload(childTasks, SimSettings.GENERIC_EDGE_DEVICE_ID);
+		List<Vm> selectedVMs = (preselectedVMs != null) ? preselectedVMs
+				: SimManager.getInstance().getEdgeOrchestrator()
+						.getVmsToOffload(childTasks, SimSettings.GENERIC_EDGE_DEVICE_ID);
 
 		for (int i = 0; i < childTasks.size(); i++) {
 			if (partitionState.failed) {
@@ -704,6 +727,41 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			networkModel.uploadStarted(childTask.getSubmittedLocation(), selectedVM.getHost().getId());
 			schedule(getId(), wlanDelay, REQUEST_RECEIVED_BY_EDGE_DEVICE, new PendingTaskSubmission(childTask, selectedVM));
 		}
+	}
+
+	/**
+	 * ONAT: how long the next DAG layer has to wait for the finished layer's results to
+	 * reach it. Each finished sub-task left its output on the UAV it ran on; the next layer
+	 * needs the layer's whole combined output on every UAV it runs on. Whatever already sits
+	 * on a destination UAV does not move, only the output produced on the OTHER UAVs crosses
+	 * the inter-UAV link (see NetworkModel.getInterLayerDelay()) - so a layer that runs
+	 * entirely where the previous one did waits for nothing. Destination UAVs receive over
+	 * their own links in parallel, so the layer can start once the slowest one has everything.
+	 *
+	 * @param finishedLayerOutputKbByHost output (KB) of the finished layer, per producing UAV (host id)
+	 * @param nextLayerVMs the VMs chosen for the next layer's sub-tasks (null entries = none found)
+	 * @return the relay delay in seconds, 0 if no output has to leave its UAV
+	 */
+	private double getInterLayerRelayDelay(Map<Integer, Long> finishedLayerOutputKbByHost, List<Vm> nextLayerVMs, NetworkModel networkModel) {
+		long totalOutputKb = 0;
+		for (long outputKb : finishedLayerOutputKbByHost.values())
+			totalOutputKb += outputKb;
+
+		Set<Integer> destinationHosts = new HashSet<Integer>();
+		for (Vm vm : nextLayerVMs) {
+			if (vm != null)
+				destinationHosts.add(vm.getHost().getId());
+		}
+
+		double relayDelay = 0;
+		for (int destinationHost : destinationHosts) {
+			long remoteOutputKb = totalOutputKb - finishedLayerOutputKbByHost.getOrDefault(destinationHost, 0L);
+			if (remoteOutputKb <= 0)
+				continue;
+			relayDelay = Math.max(relayDelay,
+					networkModel.getInterLayerDelay(remoteOutputKb, SimSettings.getInstance().getUavBandwidth()));
+		}
+		return relayDelay;
 	}
 
 	private List<TaskProperty> splitTaskProperty(TaskProperty edgeTask) {
