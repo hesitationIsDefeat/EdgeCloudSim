@@ -74,6 +74,7 @@ flowchart TB
 | `ScenarioFactory` (interface) | The extension seam. One method per pluggable component. **Every scenario implements this.** Has one `default` method (`getEdgeMobilityModel()` → `DefaultUAVMobility`, i.e. static/non-mobile edge servers) so old scenarios that predate UAVs still compile. |
 | `SimManager` | Singleton `SimEntity`. Owns all component instances, drives the CloudSim event loop (`CREATE_TASK`, `CHECK_ALL_VM`, `GET_LOAD_LOG`, `PRINT_PROGRESS`, `STOP_SIMULATION`, `GET_UAV_LOCATION_LOG`), starts/stops datacenters, and is the global lookup (`SimManager.getInstance()....`) used everywhere else instead of dependency injection. |
 | `SimSettings` | Singleton config loader/holder. Parses the `.properties` file, `edge_devices.xml`, `applications.xml` into typed getters. **Any new config knob goes here first** (comment in the file literally says so). Also owns constant IDs (`CLOUD_DATACENTER_ID`, `GENERIC_EDGE_DEVICE_ID`, ...) and the `VM_TYPES`/`NETWORK_DELAY_TYPES` enums. |
+| `CloudletSchedulerSpaceShared_Custom` | The per-VM cloudlet scheduler every edge/cloud/mobile VM is created with (CloudSim's `CloudletSchedulerSpaceShared` + a floor on the submit-time finish estimate so very short tasks can't get stuck in the exec list - see §7). Use it for any new VM-creating manager. |
 
 ### `mobility/` — device movement
 | Class | Role |
@@ -151,6 +152,7 @@ flowchart TB
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
 | `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task) and `dag_partition_weights=0.1, (0.4, 0.4), 0.1`, swept against `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `FULL_WEIGHTED` runs the SAME real layered DAG but split per the app's explicit `dag_partition_weights`, via a `partition_strategy` override to `DAG_PARTITION_STRATEGY_WEIGHTED` - see §6.3d; `FULL_(<weights>)` runs the SAME real layered DAG but split per weights encoded directly in the policy name itself, ignoring the app's own `dag_partition_weights` for that run - see §6.3d point 5; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b/§6.3d. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
+| `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`, `vm_utilization_on_edge=30`) — nothing is swept inside a run; edit `vm_utilization_on_edge` and re-run (the default no-args output folder embeds it: `sim_results/tutorial16/util<value>/ite<N>`). No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. Defaults (100 users, 1 task/s, mean 1 s service) give an offered load of 1.0; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. No `python/` plotting folder yet. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -579,6 +581,60 @@ tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
 - **`DefaultUAVMobility` sets `edgeServerManager = null`** in `initialize()` — fine since
   it never uses it (no-op `processMoveEvent`), but don't copy this pattern into a real
   policy.
+- **How a VM's queue is bounded (verified in `CloudletSchedulerSpaceShared` +
+  `UAVEdgeOrchestrator`).** A task queues only when every PE of its VM is busy
+  (`currentCpus - usedPes < numberOfPes`) - `vm_utilization_on_edge` plays no part in
+  that and never changes execution speed. It only feeds the orchestrators' admission
+  check `predictUtilization <= 100 - getTotalUtilizationOfCpu(now)`, and
+  `getTotalUtilizationOfCpu` sums the EXEC list only, so `BasicEdgeOrchestrator` and the
+  sample orchestrators never see the waiting list and place no bound on queue depth.
+  `UAVEdgeOrchestrator` (tutorial6-16) also adds the waiting list and the load already
+  reserved in the same batch, so on a 1-core UAV VM at most `floor(100 / u)` tasks (1
+  running + the rest queued) are in the system (u=30 -> 3, u=100 -> 1, u>100 -> none);
+  anything else is `REJECTED_DUE_TO_VM_CAPACITY`. With Poisson arrivals and exponential
+  lengths that is an M/M/1/K queue with K=floor(100/u) - tutorial16 reproduces the
+  textbook blocking `rho^K(1-rho)/(1-rho^(K+1))` and mean wait to within a few percent.
+  There is no queue-delay metric: the wait is folded into the processing time
+  (`serviceTime - networkDelay`). `Cloudlet.getWaitingTime()` exists but nothing logs it.
+- **CloudSim drops the finish event of very short tasks (fixed everywhere via
+  `core/CloudletSchedulerSpaceShared_Custom`).**
+  `Datacenter.processCloudletSubmit` runs `updateCloudletProcessing()` and then schedules
+  the finish event of a cloudlet that starts running right away at its raw estimated
+  finish time, but `updateCloudletProcessing()` silently skips any update requested less
+  than `CloudSim.getMinTimeBetweenEvents()` (0.01 s in every MainApp) after the previous
+  one. A task whose service time is below that window (~1% of tasks with exponential
+  lengths at 1 s mean service) was never completed and kept occupying the exec list until
+  some later submit triggered another update. On a VM that admits one task at a time
+  (`vm_utilization_on_edge` > 50 on a 1-core UAV) nothing else is ever admitted, so the VM
+  deadlocked for the rest of the run (~98% rejected instead of ~50%); on busier VMs it
+  only delayed that task's completion by an arbitrary amount. Every VM creation site
+  (`DefaultEdgeServerManager`, `DefaultCloudServerManager`, every tutorial's
+  `Sample*ServerManager`, sample_app3/5's own managers) now passes
+  `CloudletSchedulerSpaceShared_Custom`, which floors the submit-time finish estimate at
+  `minTimeBetweenEvents + 0.001`, so only tasks with a service time below ~11 ms are
+  touched, and only by completing a few ms later. **Any new manager that creates a VM
+  must use it instead of `CloudletSchedulerSpaceShared`.**
+- **Warm-up now also covers tasks rejected before upload.** `SimLogger.LogItem` used to
+  set a task's warm-up flag only in `taskStarted()`, which is never reached when the task
+  is rejected earlier (e.g. out of every UAV's service radius ->
+  `REJECTED_DUE_TO_BANDWIDTH`), so those tasks counted as failures (start time 0.0) in the
+  reported "percentage of failed tasks" even during warm-up. The flag is now initialised
+  from the clock when the log entry is created (`taskStarted()` still overrides it), so
+  results generated before this fix over-count early failures in UAV tutorials.
+- **A plain task that times out no longer crashes the run when its cloudlet later
+  returns (fixed; tutorial8-12 apps with `task_timeout` used to die on the first one).**
+  `DefaultMobileDeviceManager.processTaskTimeout` logs `TIMED_OUT` through
+  `SimLogger.timedOut`, whose `recordLog` removes the task's `LogItem`, while the cloudlet
+  keeps running (§6.9). Its later `processCloudletReturn`/`submitTaskToVm` calls
+  (`SimLogger.taskExecuted/setDownloadDelay/taskAssigned`) used to hit `taskMap.get(id) ==
+  null` -> `NullPointerException`; those three `SimLogger` methods now ignore a task that
+  has already been recorded. Any NEW per-task `SimLogger` mutator that can be reached after
+  a timeout must be null-tolerant the same way.
+- **Tutorial1-5 and the sample apps no longer initialize** (pre-existing):
+  `SimSettings.initialize` reads `uav_mobility_options` unconditionally
+  (`prop.getProperty(...).split(",")`) but their `default_config*.properties` don't define
+  it -> `NullPointerException` at `SimSettings.java:315`. Adding any
+  `uav_mobility_options=...` line is enough (those scenarios don't use it).
 - See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md)
   for tutorial8-specific build/run commands and additional history (e.g. the
   `LOCAL_FORCE` UAV policy's tuning constants, tutorial6 `compile.sh`/matlab bugs found
