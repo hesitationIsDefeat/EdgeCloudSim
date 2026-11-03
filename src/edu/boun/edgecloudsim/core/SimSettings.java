@@ -120,6 +120,10 @@ public class SimSettings {
 	// decentralized policies) so the two cadences can be tuned/compared separately.
 	private double CENTRALIZED_CONTROLLER_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
+	// ONAT: vm_utilization_on_edge values to compare in one run, each written as a policy
+	// name "UTILIZATION_<percent>" (e.g. tutorial16's "UTILIZATION_10,UTILIZATION_30") - see
+	// getVmUtilizationPolicies()/setEdgeVmUtilization(). Empty when the property isn't set.
+	private String[] VM_UTILIZATION_POLICIES;
 	private String currentTaskPartitionPolicy;
 	// ONAT: per-run override of every partitionable app's partition_count (e.g.
 	// tutorial14's PARTITION_<N> policies) - see setPartitionCountOverride().
@@ -198,6 +202,8 @@ public class SimSettings {
 	 * [12] Delay sensitivity factor [0-1]
 	 */
 	private double[][] taskLookUpTable = null;
+	// Column of vm_utilization_on_edge in taskLookUpTable (see the list above)
+	private static final int EDGE_VM_UTILIZATION_INDEX = 9;
 
 	// Application type names corresponding to taskLookUpTable entries
 	private String[] taskNames = null;
@@ -321,6 +327,11 @@ public class SimSettings {
 			// encodes its own weights (e.g. tutorial15's "FULL_(0.1,(0.4,0.4),0.1)") isn't
 			// shredded by the commas inside it - see splitTopLevelCommaList().
 			TASK_PARTITION_POLICIES = splitTopLevelCommaList(prop.getProperty("task_partition_policies", "FULL"))
+					.toArray(new String[0]);
+
+			// ONAT: only used by tutorials that compare several vm_utilization_on_edge values
+			// in one run (tutorial16) - empty (no entries) when not set.
+			VM_UTILIZATION_POLICIES = splitTopLevelCommaList(prop.getProperty("vm_utilization_policies", ""))
 					.toArray(new String[0]);
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
@@ -778,6 +789,25 @@ public class SimSettings {
 	public String[] getTaskPartitionPolicies()
 	{
 		return TASK_PARTITION_POLICIES;
+	}
+
+	/** ONAT: the "UTILIZATION_<percent>" entries of vm_utilization_policies (empty if unset). */
+	public String[] getVmUtilizationPolicies()
+	{
+		return VM_UTILIZATION_POLICIES;
+	}
+
+	/**
+	 * ONAT: overwrites vm_utilization_on_edge (column 9 of the application lookup table) of
+	 * EVERY application with the given percentage, replacing applications.xml's value. The
+	 * table is read live (CpuUtilizationModel_Custom.getUtilization/predictUtilization), so a
+	 * caller that compares several values in one process (tutorial16's MainApp) simply calls
+	 * this before starting each run.
+	 */
+	public void setEdgeVmUtilization(double percent)
+	{
+		for(int i=0; i<taskLookUpTable.length; i++)
+			taskLookUpTable[i][EDGE_VM_UTILIZATION_INDEX] = percent;
 	}
 
 	public void setTaskPartitionPolicy(String taskPartitionPolicy)
