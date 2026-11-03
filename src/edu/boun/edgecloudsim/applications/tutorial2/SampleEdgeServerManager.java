@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.cloudbus.cloudsim.CloudletSchedulerSpaceShared;
+import edu.boun.edgecloudsim.core.CloudletSchedulerSpaceShared_Custom;
 import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
@@ -110,7 +110,7 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 					long bandwidth = SimSettings.getInstance().getWlanBandwidth() / (hostNodeList.getLength()+vmNodeList.getLength());
 					
 					//VM Parameters		
-					EdgeVM vm = new EdgeVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared());
+					EdgeVM vm = new EdgeVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared_Custom());
 					vmList.get(hostCounter).add(vm);
 					vmCounter++;
 				}
