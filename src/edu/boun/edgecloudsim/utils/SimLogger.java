@@ -873,12 +873,21 @@ public class SimLogger {
 		double totalVmLoadOnEdge = 0;
 		double totalVmLoadOnCloud = 0;
 		double totalVmLoadOnMobile = 0;
+		// ONAT: like the task statistics, the average server load only covers samples taken
+		// after the warm-up period; the VM load file below still gets the whole time series
+		// (warm-up included) so the transient stays visible there.
+		int vmLoadSampleCount = 0;
 		for (VmLoadLogItem entry : vmLoadList) {
+			if (fileLogEnabled && SimSettings.getInstance().getVmLoadLogInterval() != 0)
+				appendToFile(vmLoadBW, entry.toString());
+
+			if (entry.getTime() < SimSettings.getInstance().getWarmUpPeriod())
+				continue;
+
 			totalVmLoadOnEdge += entry.getEdgeLoad();
 			totalVmLoadOnCloud += entry.getCloudLoad();
 			totalVmLoadOnMobile += entry.getMobileLoad();
-			if (fileLogEnabled && SimSettings.getInstance().getVmLoadLogInterval() != 0)
-				appendToFile(vmLoadBW, entry.toString());
+			vmLoadSampleCount++;
 		}
 
 		if (fileLogEnabled) {
@@ -940,9 +949,9 @@ public class SimLogger {
 				double _serviceTime = (completedTask[i] == 0) ? 0.0 : (serviceTime[i] / (double) completedTask[i]);
 				double _networkDelay = (completedTask[i] == 0) ? 0.0 : (networkDelay[i] / ((double) completedTask[i] - (double)completedTaskOnMobile[i]));
 				double _processingTime = (completedTask[i] == 0) ? 0.0 : (processingTime[i] / (double) completedTask[i]);
-				double _vmLoadOnEdge = (vmLoadList.size() == 0) ? 0.0 : (totalVmLoadOnEdge / (double) vmLoadList.size());
-				double _vmLoadOnClould = (vmLoadList.size() == 0) ? 0.0 : (totalVmLoadOnCloud / (double) vmLoadList.size());
-				double _vmLoadOnMobile = (vmLoadList.size() == 0) ? 0.0 : (totalVmLoadOnMobile / (double) vmLoadList.size());
+				double _vmLoadOnEdge = (vmLoadSampleCount == 0) ? 0.0 : (totalVmLoadOnEdge / (double) vmLoadSampleCount);
+				double _vmLoadOnClould = (vmLoadSampleCount == 0) ? 0.0 : (totalVmLoadOnCloud / (double) vmLoadSampleCount);
+				double _vmLoadOnMobile = (vmLoadSampleCount == 0) ? 0.0 : (totalVmLoadOnMobile / (double) vmLoadSampleCount);
 				double _cost = (completedTask[i] == 0) ? 0.0 : (cost[i] / (double) completedTask[i]);
 				double _QoE1 = (completedTask[i] == 0) ? 0.0 : (QoE[i] / (double) completedTask[i]);
 				double _QoE2 = (completedTask[i] == 0) ? 0.0 : (QoE[i] / (double) (failedTask[i] + completedTask[i]));
@@ -1170,9 +1179,9 @@ public class SimLogger {
 				+ String.format("%.6f", uavDelay[numOfAppTypes] / (double) uavUsage[numOfAppTypes]) + ")");
 
 		printLine("average server utilization Edge/Cloud/Mobile: " 
-				+ String.format("%.6f", totalVmLoadOnEdge / (double) vmLoadList.size()) + "/"
-				+ String.format("%.6f", totalVmLoadOnCloud / (double) vmLoadList.size()) + "/"
-				+ String.format("%.6f", totalVmLoadOnMobile / (double) vmLoadList.size()));
+				+ String.format("%.6f", totalVmLoadOnEdge / (double) vmLoadSampleCount) + "/"
+				+ String.format("%.6f", totalVmLoadOnCloud / (double) vmLoadSampleCount) + "/"
+				+ String.format("%.6f", totalVmLoadOnMobile / (double) vmLoadSampleCount));
 
 		printLine("average cost: " + cost[numOfAppTypes] / completedTask[numOfAppTypes] + "$");
 		printLine("average overhead: " + orchestratorOverhead[numOfAppTypes] / (failedTask[numOfAppTypes] + completedTask[numOfAppTypes]) + " ns");
@@ -1360,6 +1369,14 @@ class VmLoadLogItem {
 	 */
 	public double getEdgeLoad() {
 		return vmLoadOnEdge;
+	}
+
+	/**
+	 * Returns the simulation time when this measurement was taken.
+	 * @return simulation timestamp in seconds
+	 */
+	public double getTime() {
+		return time;
 	}
 
 	/**
