@@ -11,15 +11,38 @@ import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.core.CloudSim;
 
-public class UAVNetworkModel extends NetworkModel {
-    private double poissonMean;
-    private double avgTaskInputSize;
-    private double avgTaskOutputSize;
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * ONAT: WLAN model between mobile devices and UAVs, driven entirely by what actually
+ * happens in the simulation instead of configured averages:
+ * <ul>
+ *   <li>Payload: an upload carries the task's own input size and a download its own output
+ *   size (what the task was really generated with), not the application's mean sizes.</li>
+ *   <li>Bandwidth: derived from the device's and the UAV's positions at the moment of the
+ *   transfer (see {@link #getBandwidthAtDistance(double)}).</li>
+ *   <li>Contention: every UAV's WLAN is one shared first-come-first-served link. A transfer
+ *   waits behind the transfers that were actually started on that UAV and are still in
+ *   progress, so the queueing delay follows the real arrival times and sizes instead of
+ *   an M/M/1 estimate built from the mean inter-arrival time and the number of devices
+ *   standing nearby.</li>
+ * </ul>
+ * A transfer that cannot take place (no UAV link, or the device is outside the UAV's service
+ * radius) returns 0.0, which the callers treat as a rejection.
+ */
+public class UAVNetworkModel extends NetworkModel {
     private static final int MAX_WLAN_BANDWIDTH = SimSettings.getInstance().getWlanBandwidth();
 
-    /** Devices within this range of a UAV are treated as contending for its bandwidth */
-    private static final double CO_LOCATION_RANGE = 50.0; // m
+    // Sizes are whole KB (the sampled sizes are truncated to long), so a sub-KB payload shows
+    // up as 0 - treat it as the smallest representable payload, since a 0 s delay would be
+    // read by the callers as a rejected transfer.
+    private static final long MIN_PAYLOAD_KB = 1;
+
+    // Simulation time at which each UAV's WLAN link (keyed by host id) finishes the transfers
+    // started so far, i.e. when a transfer arriving now could actually start.
+    private final Map<Integer, Double> linkFreeAt = new HashMap<Integer, Double>();
+
     /**
      * Constructs a new NetworkModel instance with the specified parameters.
      *
@@ -32,42 +55,7 @@ public class UAVNetworkModel extends NetworkModel {
 
     @Override
     public void initialize() {
-        poissonMean = 0;
-        avgTaskInputSize = 0;
-        avgTaskOutputSize = 0;
-
-        double numOfTaskType = 0;
-        SimSettings SS = SimSettings.getInstance();
-        for (int i = 0; i < SimSettings.getInstance().getTaskLookUpTable().length; i++) {
-            double weight = SS.getTaskLookUpTable()[i][0] / (double) 100;
-            if (weight != 0) {
-                poissonMean += (SS.getTaskLookUpTable()[i][2]) * weight;
-                avgTaskInputSize += SS.getTaskLookUpTable()[i][5] * weight;
-                avgTaskOutputSize += SS.getTaskLookUpTable()[i][6] * weight;
-                numOfTaskType++;
-            }
-        }
-
-        poissonMean = poissonMean / numOfTaskType;
-        avgTaskInputSize = avgTaskInputSize / numOfTaskType;
-        avgTaskOutputSize = avgTaskOutputSize / numOfTaskType;
-    }
-
-    private double calculateMM1(double propagationDelay, int bandwidth /*Kbps*/, double PoissonMean, double avgTaskSize /*KB*/, int deviceCount) {
-        double Bps = 0, mu = 0, lamda = 0;
-        avgTaskSize = avgTaskSize * (double) 1000; // KB -> Bytes
-        Bps = bandwidth * (double) 1000 / (double) 8; // Kbps -> Bytes/sec
-        lamda = ((double) 1 / (double) PoissonMean) * (double) deviceCount;
-        mu = Bps / avgTaskSize;
-
-        // Safety check to prevent negative delay if the network is overloaded.
-        // Returning zero causes the caller to treat the link as unavailable and
-        // reject the task instead of injecting a synthetic penalty latency.
-        if (mu <= lamda) return 0.0;
-
-        double result = (double) 1 / (mu - lamda);
-        result += propagationDelay;
-        return result;
+        linkFreeAt.clear();
     }
 
     private int getBandwidthAtDistance(double distance) {
@@ -122,31 +110,50 @@ public class UAVNetworkModel extends NetworkModel {
     }
 
     /**
-     * Counts mobile devices currently within CO_LOCATION_RANGE of the given UAV location.
-     * Replaces the flat numberOfMobileDevices/numDatacenter average with an actual
-     * proximity-based count, since devices no longer snap to discrete grid cells.
+     * Where the device is right now (not where the task was submitted): a download happens
+     * after the device has moved on, and the UAVs move too, so the distance has to be taken
+     * from the positions at the moment of the transfer.
      */
-    private int getDeviceCount(Location uavLocation, double time) {
-        int deviceCount = 0;
-        for (int i = 0; i < numberOfMobileDevices; i++) {
-            Location location = SimManager.getInstance().getMobilityModel().getLocation(i, time);
-            if (SimUtils.getEuclideanDistance(location, uavLocation) <= CO_LOCATION_RANGE)
-                deviceCount++;
-        }
-        return deviceCount;
+    private Location getCurrentDeviceLocation(Task task) {
+        return SimManager.getInstance().getMobilityModel().getLocation(task.getMobileDeviceId(), CloudSim.clock());
+    }
+
+    /**
+     * Computes how long moving payloadKB between the device and the given UAV takes right
+     * now and books that time on the UAV's shared link, so the transfers that follow queue
+     * behind it. The callers (DefaultMobileDeviceManager) ask for the delay once per real
+     * transfer and start the transfer whenever the result is positive, so booking it here is
+     * equivalent to starting the transfer.
+     *
+     * @return the delay in seconds (waiting for the link plus transmission), or 0.0 if
+     *         there is no UAV link to carry it or the device is out of the UAV's range
+     */
+    private double getTransferDelay(UAV uav, Location deviceLocation, long payloadKB) {
+        if (uav == null)
+            return 0.0;
+
+        int bandwidth /*Kbps*/ = getBandwidthAtDistance(SimUtils.getEuclideanDistance(deviceLocation, uav.getLocation()));
+        if (bandwidth <= 0)
+            return 0.0;
+
+        double now = CloudSim.clock();
+        double transmissionTime = Math.max(payloadKB, MIN_PAYLOAD_KB) * 8.0 / bandwidth; // KB -> Kb, Kb / Kbps = s
+        double transferStart = Math.max(now, linkFreeAt.getOrDefault(uav.getId(), 0.0));
+        double transferEnd = transferStart + transmissionTime;
+        linkFreeAt.put(uav.getId(), transferEnd);
+
+        return transferEnd - now;
     }
 
     @Override
     public double getUploadDelay(int sourceDeviceId, int destDeviceId, Task task) {
-        double currentDistance;
-        int currentBandwidth = MAX_WLAN_BANDWIDTH;
-        int deviceCount = numberOfMobileDevices / SimSettings.getInstance().getNumOfEdgeDatacenters();
+        Location deviceLocation = getCurrentDeviceLocation(task);
 
         Host destHost = SimUtils.getHostFromId(destDeviceId);
         UAV uav = null;
         if (destHost instanceof UAV) {
-            // Caller already knows the bound host (e.g. download delay, or a
-            // partitioned task's pre-selected sibling VM) - use it directly.
+            // Caller already knows the bound host (e.g. a partitioned task's
+            // pre-selected sibling VM) - use it directly.
             uav = (UAV) destHost;
         } else if (destDeviceId == SimSettings.GENERIC_EDGE_DEVICE_ID) {
             // Upload delay for a not-yet-partitioned task is computed before the
@@ -154,32 +161,20 @@ public class UAVNetworkModel extends NetworkModel {
             // sentinel here, not a real host ID. Approximate with the nearest UAV,
             // since WLAN association is driven by radio proximity, not by the
             // orchestrator's (possibly load-based) VM placement decision.
-            uav = findNearestUAV(task.getSubmittedLocation());
+            uav = findNearestUAV(deviceLocation);
         }
 
-        if (uav != null) {
-            Location deviceLoc = task.getSubmittedLocation();
-            Location uavLoc = uav.getLocation();
-
-            currentDistance = SimUtils.getEuclideanDistance(deviceLoc, uavLoc);
-
-            currentBandwidth = getBandwidthAtDistance(currentDistance);
-            deviceCount = getDeviceCount(uavLoc, CloudSim.clock());
-        }
-        return calculateMM1(0,
-                currentBandwidth,
-                poissonMean,
-                avgTaskOutputSize,
-                deviceCount);
+        return getTransferDelay(uav, deviceLocation, task.getCloudletFileSize());
     }
 
     @Override
     public double getDownloadDelay(int sourceDeviceId, int destDeviceId, Task task) {
-        // getUploadDelay resolves its target host from its *second* parameter;
-        // sourceDeviceId here is the already-bound host ID and destDeviceId is the
-        // mobile device ID, i.e. reversed from getUploadDelay's own parameter order -
-        // swap them so the host ID (not the device ID) is what gets looked up.
-        return getUploadDelay(destDeviceId, sourceDeviceId, task);
+        // Unlike getUploadDelay, the first parameter is the already-bound host (the UAV
+        // sending the result back) and the second is the mobile device receiving it.
+        Host sourceHost = SimUtils.getHostFromId(sourceDeviceId);
+        UAV uav = (sourceHost instanceof UAV) ? (UAV) sourceHost : null;
+
+        return getTransferDelay(uav, getCurrentDeviceLocation(task), task.getCloudletOutputSize());
     }
 
     @Override
