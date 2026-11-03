@@ -15,7 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.cloudbus.cloudsim.CloudletSchedulerSpaceShared;
+import edu.boun.edgecloudsim.core.CloudletSchedulerSpaceShared_Custom;
 import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
@@ -92,7 +92,7 @@ public class SampleMobileServerManager extends MobileServerManager{
 			long bandwidth = 0;
 			
 			//VM Parameters		
-			MobileVM vm = new MobileVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared());
+			MobileVM vm = new MobileVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared_Custom());
 			vmList.get(i).add(vm);
 			vmCounter++;
 		}

@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.cloudbus.cloudsim.CloudletSchedulerSpaceShared;
+import edu.boun.edgecloudsim.core.CloudletSchedulerSpaceShared_Custom;
 import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
@@ -99,7 +99,7 @@ public class DefaultCloudServerManager extends CloudServerManager{
 				long bandwidth = 0;
 				
 				// Create cloud VM with configured parameters
-				CloudVM vm = new CloudVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared());
+				CloudVM vm = new CloudVM(vmCounter, brokerId, mips, numOfCores, ram, bandwidth, storage, vmm, new CloudletSchedulerSpaceShared_Custom());
 				vmList.get(i).add(vm);
 				vmCounter++;
 			}
