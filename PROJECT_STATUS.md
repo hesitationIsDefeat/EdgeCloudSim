@@ -18,7 +18,8 @@ CloudSim) extended with:
   (`applications.xml`'s `dag_layers`) instead of one flat independent batch - layer L
   only starts once every sub-task in layer L-1 has completed, while sub-tasks within the
   same layer run in parallel. See §6.3b. Layer transitions incur a simulated UAV relay
-  delay (`uav_bandwidth` config, `NetworkModel.getInterLayerDelay`) - see §6.3c.
+  delay (`uav_bandwidth` config, `NetworkModel.getInterLayerDelay`) only for the output
+  that has to move to a *different* UAV than the one that produced it - see §6.3c.
 - **Soft task-timeout**: any task (plain or partitioned/DAG) still in flight
   (uploading/processing/downloading) `task_timeout` seconds after its own creation gets
   ONE `TASK_STATUS.TIMED_OUT` outcome logged, but keeps running to completion unaffected
@@ -99,7 +100,7 @@ flowchart TB
 |---|---|
 | `NetworkModel` (abstract) | `getUploadDelay`/`getDownloadDelay(sourceId, destId, Task)` + upload/download start/finish hooks used for queue-state bookkeeping. |
 | `MM1Queue` | Classic M/M/1 queueing-theory delay model (WLAN/MAN/WAN/GSM tiers) — the "default" network model used by tutorial1-5. |
-| `network/uav/UAVNetworkModel` | M/M/1-style WLAN delay specialized for the UAV scenarios; returns `0.0` (treated as "link unavailable/reject") instead of a negative delay when the queue is saturated. |
+| `network/uav/UAVNetworkModel` | WLAN delay for the UAV scenarios, driven by real simulation data rather than configured averages: each UAV's WLAN is one shared FCFS link, and a transfer takes the task's **own** payload (`getCloudletFileSize()` for an upload, `getCloudletOutputSize()` for a download; a sub-KB/0 KB payload counts as 1 KB so it is never mistaken for a rejection) divided by the bandwidth at the device↔UAV distance **at transfer time** (Shannon-scaled, see `getBandwidthAtDistance`), plus the wait behind the transfers already booked on that UAV's link (`linkFreeAt`). Returns `0.0` (treated as "link unavailable/reject") when there is no UAV link or the device is outside `UAV.SERVICE_RADIUS`. The delay getters book the transfer themselves (the `*Started`/`*Finished` hooks are no-ops) - `DefaultMobileDeviceManager` asks once per real transfer and always starts it when the result is positive. |
 
 ### `edge_orchestrator/` — placement decisions
 | Class | Role |
@@ -343,15 +344,22 @@ the next layer executes, so layer transitions aren't instantaneous.
    concrete (non-abstract) method on the base class — deliberately simple
    (`dataSizeKB * 8 / bandwidthKbps`, no queueing) and isolated in one place so it can be
    swapped for a more realistic model later without touching call sites.
-3. **Runtime**: `PartitionState` gained `currentLayerOutputDataSum`, which accumulates
-   every sub-task's `getCloudletOutputSize()` as the running layer's children complete
-   (reset to 0 in `submitChildTaskBatch`, i.e. at the start of each layer). Once a layer
-   finishes, instead of submitting the next layer immediately, the handler computes the
-   delay via `getInterLayerDelay(currentLayerOutputDataSum, getUavBandwidth())`, logs it
-   (`SimLogger.addInterLayerDelay`), and schedules a new `SUBMIT_NEXT_DAG_LAYER` event
-   after that delay (rather than submitting synchronously) — the handler re-checks
-   `partitionStateMap`/`partitionState.failed` before submitting, so a failure during the
-   relay delay still correctly discards the remaining layers.
+3. **Runtime**: only the output that actually has to change UAV is relayed. `PartitionState`
+   gained `currentLayerOutputKbByHost` (UAV host id → KB), which accumulates every
+   sub-task's `getCloudletOutputSize()` under the UAV it ran on (`getAssociatedHostId()`)
+   as the running layer's children complete (cleared in `submitChildTaskBatch`, i.e. at the
+   start of each layer). Once a layer finishes, the handler builds the next layer's
+   children and **selects their UAVs/VMs right away** (`getVmsToOffload`; the choice is
+   carried to `submitChildTaskBatch` via `PendingLayerSubmission.selectedVMs`), then
+   `getInterLayerRelayDelay` works out the delay: for every distinct destination UAV the
+   next layer runs on, the layer's output produced on the *other* UAVs goes through
+   `getInterLayerDelay(remoteKB, getUavBandwidth())`; destinations receive in parallel, so
+   the delay is the slowest one, and it is **0 when everything already sits on the
+   destination UAV(s)** (e.g. a single-UAV scenario never pays it). A positive delay is
+   logged (`SimLogger.addInterLayerDelay`); either way a `SUBMIT_NEXT_DAG_LAYER` event is
+   scheduled after that delay (rather than submitting synchronously) — the handler
+   re-checks `partitionStateMap`/`partitionState.failed` before submitting, so a failure
+   during the relay delay still correctly discards the remaining layers.
 4. **Logging**: new `NETWORK_DELAY_TYPES.UAV_DELAY`, accumulated per-task in
    `LogItem.uavDelay` (via `addUavDelay`, `+=` not overwrite, since a DAG can have
    multiple layer transitions) and folded into `LogItem.getNetworkDelay()`'s total — so it
@@ -615,6 +623,19 @@ tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
   `minTimeBetweenEvents + 0.001`, so only tasks with a service time below ~11 ms are
   touched, and only by completing a few ms later. **Any new manager that creates a VM
   must use it instead of `CloudletSchedulerSpaceShared`.**
+- **Server utilization averages skip the warm-up period.** `SimLogger.simStopped()` only
+  averages `VmLoadLogItem` samples taken at or after `warm_up_period` into the GENERIC
+  logs' VM-load columns and the console summary, matching the task statistics (a
+  warm-up-inclusive average used to understate it, e.g. 39.5 vs 43.8 in a tutorial16
+  run). `*_VM_LOAD.log` still contains the whole time series, warm-up included. Results
+  generated before this change include the warm-up samples.
+- **UAV WLAN delay uses real data (changed).** `UAVNetworkModel` no longer derives the
+  delay from M/M/1 on mean task sizes/inter-arrival times and a count of nearby devices.
+  Payload, device↔UAV distance and link backlog all come from what really happened (see
+  the class table), so network delay now follows each task's own size, and a device that
+  walked out of the UAV's radius while its task was queued fails the *download* (failure
+  reason 3 / `UNFINISHED_DUE_TO_BANDWIDTH`) - the old model measured that distance from the
+  stale submit-time position. Results generated before this change are not comparable.
 - **Warm-up now also covers tasks rejected before upload.** `SimLogger.LogItem` used to
   set a task's warm-up flag only in `taskStarted()`, which is never reached when the task
   is rejected earlier (e.g. out of every UAV's service radius ->
