@@ -21,6 +21,13 @@ public class UAV extends EdgeHost {
     // ONAT: Assumed to be at least 125
     public static int SERVICE_RADIUS = 100; // m
 
+    // ONAT: service-capability restriction (edge_devices.xml's optional
+    // <service_capability> host tag) - the list of app service_index values (see
+    // SimSettings.getTaskServiceIndex()) this UAV is allowed to run. null/empty (the
+    // default, when the tag is absent for this host) means UNRESTRICTED: this UAV can
+    // run every app, preserving the original "every UAV can run every task" behavior.
+    private final int[] serviceCapability;
+
     /**
      * Constructs an EdgeHost with the specified resource configuration.
      * Initializes the host with processing elements, resource provisioners,
@@ -39,6 +46,11 @@ public class UAV extends EdgeHost {
         this.mobilityInterval = SimSettings.getInstance().getUavMobilityInterval();
         this.speed = 15;
         this.maxMoveDistance = this.speed * mobilityInterval;
+        // ONAT: looked up by this UAV's own host id, which - across every
+        // EdgeServerManager implementation - is assigned in the exact same
+        // datacenter-then-host document order used by SimSettings.parseEdgeDevicesXML()
+        // to build edgeHostServiceCapability, so index id always matches this host.
+        this.serviceCapability = SimSettings.getInstance().getHostServiceCapability(id);
     }
 
     public double getMaxMoveDistance() {
@@ -55,6 +67,20 @@ public class UAV extends EdgeHost {
 
     public boolean isUserInRange(Location userLocation) {
         return SimUtils.getEuclideanDistance(this.getLocation(), userLocation) <= SERVICE_RADIUS;
+    }
+
+    /**
+     * @param taskServiceIndex the service_index (see SimSettings.getTaskServiceIndex())
+     *                         of the app a candidate task belongs to
+     * @return true if this UAV is allowed to run that app - always true when
+     * unrestricted (no service_capability declared for this host in edge_devices.xml)
+     */
+    public boolean canServeTaskType(int taskServiceIndex) {
+        if (serviceCapability == null || serviceCapability.length == 0) return true;
+        for (int supported : serviceCapability) {
+            if (supported == taskServiceIndex) return true;
+        }
+        return false;
     }
 
     public EdgeVM getVm() {
