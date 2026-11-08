@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<applications>
+	<!-- ONAT: tutorial17's 4 applications are otherwise IDENTICAL (same timing/size/
+	     utilization parameters) - the only thing that differs between them is name and
+	     service_index. service_index is the label edge_devices.xml's per-host
+	     <service_capability> lists reference to restrict a UAV to only some apps (see
+	     SimSettings.getTaskServiceIndex()/UAV.canServeTaskType()); it defaults to an
+	     app's own 0-based position in this file when omitted, but is set explicitly
+	     here (0,1,2,3) so the correspondence between an app and the number edge_devices.xml
+	     uses for it is visible directly in this file, exactly as it is in edge_devices.xml.
+	     usage_percentage=25 for every app means a user is equally likely to generate any
+	     one of the 4 app types, so every service_index is exercised by roughly the same
+	     offered load. A task whose app has no in-range, capable UAV (see
+	     edge_devices.xml) is rejected (REJECTED_DUE_TO_VM_CAPACITY) exactly like a task
+	     that doesn't fit a UAV's remaining capacity - that is the "fails if none
+	     available" behavior this tutorial demonstrates. -->
+	<application name="SERVICE_APP_0">
+		<service_index>0</service_index>
+		<usage_percentage>25</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<!-- ONAT: idle_period=0 removes the ON/OFF duty-cycle entirely (active windows
+		     become back-to-back with no gap) so task arrivals are a single continuous
+		     Poisson process at rate 1/poisson_interarrival per user. -->
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_1">
+		<service_index>1</service_index>
+		<usage_percentage>25</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_2">
+		<service_index>2</service_index>
+		<usage_percentage>25</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_3">
+		<service_index>3</service_index>
+		<usage_percentage>25</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>
