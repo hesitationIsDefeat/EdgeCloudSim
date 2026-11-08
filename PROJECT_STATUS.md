@@ -107,7 +107,7 @@ flowchart TB
 |---|---|
 | `EdgeOrchestrator` (abstract `SimEntity`) | `initialize()`, `getDeviceToOffload(Task)` (cloud vs edge vs mobile, returns a device-type constant), `getVmToOffload(Task, deviceId)` (pick one VM), and `getVmsToOffload(List<Task>, deviceId)` (**batch** selection for sibling sub-tasks of a partitioned task — default impl just loops `getVmToOffload`; override this if your placement needs to see the whole batch's cumulative load before committing, as `UAVEdgeOrchestrator` does). |
 | `BasicEdgeOrchestrator` | Implements `FIRST_FIT`/`NEXT_FIT`/`BEST_FIT`/`WORST_FIT`/`RANDOM_FIT` VM selection, location-aware (`selectVmOnHost`) or global-load-balanced (`selectVmOnLoadBalancer`, only in `TWO_TIER_WITH_EO` scenario) placement on the edge tier, worst-fit-by-capacity on cloud. Policy name comes from `orchestrator_policies` config and is read via `this.policy`. |
-| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location**. Overrides `getVmsToOffload` to reserve predicted load per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
+| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10). Overrides `getVmsToOffload` to reserve predicted load per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
 
 ### `edge_server/` — edge (and UAV) infrastructure
 | Class | Role |
@@ -117,7 +117,7 @@ flowchart TB
 | `EdgeHost` | CloudSim `Host` subclass + a `Location`. |
 | `EdgeVM` | CloudSim `Vm` subclass carrying its `VM_TYPES` tag. |
 | `EdgeVmAllocationPolicy_Custom` | VM→host allocation policy for edge datacenters. |
-| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors. **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
+| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors, and `canServeTaskType(serviceIndex)` (tutorial17+ — true when unrestricted, i.e. `edge_devices.xml` declared no `service_capability` for this host, or when `serviceIndex` is in that host's declared list; see §6.10). **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
 
 ### `cloud_server/` — cloud infrastructure (mirrors `edge_server/`)
 `CloudServerManager` (abstract) → `DefaultCloudServerManager` (XML-driven, single `localDatacenter`), `CloudVM`, `CloudVmAllocationPolicy_Custom`.
@@ -154,6 +154,7 @@ flowchart TB
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
 | `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task) and `dag_partition_weights=0.1, (0.4, 0.4), 0.1`, swept against `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `FULL_WEIGHTED` runs the SAME real layered DAG but split per the app's explicit `dag_partition_weights`, via a `partition_strategy` override to `DAG_PARTITION_STRATEGY_WEIGHTED` - see §6.3d; `FULL_(<weights>)` runs the SAME real layered DAG but split per weights encoded directly in the policy name itself, ignoring the app's own `dag_partition_weights` for that run - see §6.3d point 5; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b/§6.3d. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
 | `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`). It sweeps the number of users (`min`/`max_number_of_mobile_devices`) and, like tutorial15's `task_partition_policies`, a list of **VM utilization policies**: `vm_utilization_policies=UTILIZATION_10,UTILIZATION_30,UTILIZATION_50,...` in `default_config.properties` — each entry is a policy name `UTILIZATION_<percent>` (decimals allowed) whose value `MainApp` writes into every app's `vm_utilization_on_edge` for that run via `SimSettings.setEdgeVmUtilization()` (applications.xml's own value is only a placeholder), so several utilizations land in the same plot as separate lines (same "numeric parameter encoded in the policy name" convention as `PARTITION_<N>`, §6.2 point 8). A missing list or an entry that isn't `UTILIZATION_<percent>` aborts the run up front. Results go to `sim_results/tutorial16/ite<N>/SIMRESULT_<scenario>_<orchestrator>_UTILIZATION_<percent>_<users>DEVICES_*`. No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. With the default 1 task per user per 100 s and mean 1 s service the offered load is users/100; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. `python/` is tutorial15's plotting folder copied as-is (`plot.sh` + `plotAvg*.py`), adapted only so the scenarios/legends come from `vm_utilization_policies` (legend "30% Utilization"; x axis is the number of clients). |
+| `tutorial17` | Demonstrates the **per-UAV service-capability** mechanism (§6.10), with every UAV currently configured UNRESTRICTED: `applications.xml` defines 4 otherwise-identical apps (`SERVICE_APP_0..3`, each `usage_percentage=25`), one per explicit `service_index` (0-3); `edge_devices.xml` (16 UAVs, tutorial10's 4-datacenter/4-host-each corner layout) gives every host an EXPLICIT multi-entry `service_capability` of `0,1,2,3` - functionally equivalent to omitting the tag (every UAV can run every app), but kept explicit to show the list accepts more than one index. `UAVEdgeOrchestrator`/`UAV.canServeTaskType()` still enforce the check on every placement decision; with this config a task is never rejected for a service-capability mismatch, only for the ordinary range/capacity reasons - edit any host's `service_capability` to a narrower subset (e.g. a single index) to reproduce the capability-mismatch failures the feature exists to model. Users move with a plain, non-converging random walk (tutorial6's `SampleMobilityModel`, reused directly - no `ConvergingMobilityModel`/meeting zone), while `uav_mobility_options` sweeps every real `CentralizedUAVMobility` policy EXCEPT `NO`/`RANDOM`: `PRIORITY_KMEANS,APF,CAPACITY_FILL,ADAPTIVE_KMEANS` (see §6.2). No SAR, no partitioning - uses the core `IdleActiveLoadGenerator` directly, same non-SAR structure as tutorial16. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -185,11 +186,18 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   overrides `partition_count` with the sum of every layer — see §6.3b. Optional
   `task_timeout` (seconds, per-app — different apps can have different urgency):
   `<=0`/absent (the default) disables hard task-timeout cancellation for that app
-  entirely — see §6.9.
+  entirely — see §6.9. Optional `service_index` (integer, tutorial17+): the label an
+  edge host's `edge_devices.xml` `service_capability` list references to restrict a UAV
+  to this app — defaults to the app's own 0-based position in this file (the same value
+  as `Task.getTaskType()`/`SimSettings.getTaskServiceIndex()`) when absent — see §6.10.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
-  mobility models.
+  mobility models. Optional per-`<host>` tag (tutorial17+, UAV scenarios only):
+  `service_capability` (comma list of `service_index` values, e.g. `0,2`) restricts that
+  host's UAV to running only the listed app(s) — absent/empty (the default) leaves the
+  UAV UNRESTRICTED (can run every app), preserving the original behavior for every
+  edge_devices.xml that doesn't set it — see §6.10.
 
 ## 6. Cookbook — "How do I add a new ___?"
 
@@ -555,6 +563,41 @@ tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
   for a plain task, or let `failPartition(...)` do it for a partitioned one) — otherwise
   a `pendingTimeouts` entry leaks for the rest of the run and could log a stale/incorrect
   TIMED_OUT outcome for a task id that has already resolved through a different path.
+
+### 6.10 Per-UAV service-capability restriction (tutorial17 pattern)
+Restricts a UAV to running only a declared subset of applications, instead of every UAV
+being able to run every app (the pre-existing, still-default behavior).
+1. **Config**: `applications.xml`'s optional `<service_index>` (integer) labels an app
+   for this purpose - defaults to that app's own 0-based position in the file (the same
+   value as `Task.getTaskType()`) when absent, so existing `applications.xml` files need
+   no change. `edge_devices.xml`'s optional `<service_capability>` tag on any `<host>` is
+   a comma list of these `service_index` values (e.g. `0,2`) - the host's UAV may ONLY
+   run app(s) in that list. A host that doesn't set the tag remains UNRESTRICTED (runs
+   every app), so every pre-tutorial17 `edge_devices.xml` is unaffected.
+2. **Parsing** (`SimSettings`): `taskServiceIndex[]` (parsed in `parseApplicationsXML`,
+   exposed via `getTaskServiceIndex(taskType)`) and `edgeHostServiceCapability` (a
+   `List<int[]>` parsed in `parseEdgeDevicesXML`, exposed via
+   `getHostServiceCapability(hostId)`) - the list's index `hostId` relies on
+   `parseEdgeDevicesXML` traversing `<datacenter>` → `<host>` in the exact same document
+   order, incrementing one global counter, as every `EdgeServerManager` implementation's
+   own `hostIdCounter` when it later constructs the matching `UAV` object - so index i
+   here always corresponds to the host actually assigned id i. A null/missing entry
+   means unrestricted.
+3. **Enforcement**: `UAV`'s constructor reads its own capability list once via
+   `SimSettings.getHostServiceCapability(id)` (no `EdgeServerManager` changes needed -
+   every tutorial's `SampleEdgeServerManager` already passes its own `hostIdCounter` as
+   the UAV's `id`); `UAV.canServeTaskType(serviceIndex)` returns `true` unconditionally
+   when unrestricted, else checks membership. `UAVEdgeOrchestrator.getUAVToOffloadTo`
+   skips any UAV for which `canServeTaskType(SimSettings.getTaskServiceIndex(task.
+   getTaskType()))` is `false`, alongside its existing range/capacity checks - a task
+   with NO capable, in-range, non-full UAV is rejected exactly like any other "no
+   suitable VM" case (`REJECTED_DUE_TO_VM_CAPACITY`, no new failure reason needed).
+4. **Not mobility-aware**: no `BasicUAVMobility`/`CentralizedUAVMobility` policy knows
+   about a UAV's service-capability restriction - they still move every UAV based purely
+   on device positions/priorities, oblivious to which app a nearby device is about to
+   request. A capability-restricted UAV can therefore still end up far from the one
+   device that needed it; see `tutorial17` for a scenario deliberately built to surface
+   this (see §4).
 
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
