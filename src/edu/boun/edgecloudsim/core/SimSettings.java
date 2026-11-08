@@ -233,6 +233,24 @@ public class SimSettings {
 	 * force-cancelled (see DefaultMobileDeviceManager's TASK_TIMEOUT handling).
 	 * Defaults to 0 (disabled) for apps that don't set it. */
 	private double[] taskTimeout = null;
+	/** ONAT: the service-capability index this app is identified by (applications.xml's
+	 * optional service_index tag) - used to match a task's app against a UAV's declared
+	 * service_capability list in edge_devices.xml (see UAV.canServeTaskType()). Defaults
+	 * to the app's own 0-based position in applications.xml (the same value as
+	 * Task.getTaskType()) when the tag is absent, so existing applications.xml files
+	 * keep working unchanged. */
+	private int[] taskServiceIndex = null;
+
+	/** ONAT: per-edge-host service-capability restriction (edge_devices.xml's optional
+	 * service_capability tag on a &lt;host&gt;) - each entry is the list of app
+	 * service_index values (see taskServiceIndex above) that host's UAV is allowed to
+	 * run, in the SAME global host ordering used when host objects are actually
+	 * constructed (DefaultEdgeServerManager/SampleEdgeServerManager's hostIdCounter -
+	 * both traverse datacenter-then-host in document order, incrementing a single
+	 * counter, so index i here always corresponds to the host assigned id i). A null
+	 * entry means that host is UNRESTRICTED (can run every app) - the default when the
+	 * tag is absent, preserving the original "every UAV can run every task" behavior. */
+	private List<int[]> edgeHostServiceCapability = null;
 
     /** ONAT:
      * Event tag for edge server movement. */
@@ -989,6 +1007,28 @@ public class SimSettings {
 		return taskNames[taskType];
 	}
 
+	/** ONAT: the service-capability index this task's app is identified by (see
+	 * taskServiceIndex) - compared against a UAV's edge_devices.xml service_capability
+	 * list by UAVEdgeOrchestrator/UAV.canServeTaskType() to decide whether that UAV is
+	 * allowed to run this task at all. */
+	public int getTaskServiceIndex(int taskType)
+	{
+		return taskServiceIndex[taskType];
+	}
+
+	/**
+	 * ONAT: the service-capability list (app service_index values, see
+	 * getTaskServiceIndex()) declared for the edge host with the given id in
+	 * edge_devices.xml, in the same global host ordering used when host objects are
+	 * constructed - null/empty means that host is UNRESTRICTED and can run every app
+	 * (the default when edge_devices.xml doesn't set service_capability for it).
+	 */
+	public int[] getHostServiceCapability(int hostId) {
+		if (edgeHostServiceCapability == null || hostId < 0 || hostId >= edgeHostServiceCapability.size())
+			return null;
+		return edgeHostServiceCapability.get(hostId);
+	}
+
 	public boolean isTaskPartitionable(int taskType)
 	{
 		if("NO".equals(currentTaskPartitionPolicy))
@@ -1221,6 +1261,7 @@ public class SimSettings {
 			taskDagLayers = new int[appList.getLength()][];
 			taskDagPartitionWeights = new double[appList.getLength()][][];
 			taskTimeout = new double[appList.getLength()];
+			taskServiceIndex = new int[appList.getLength()];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
 
@@ -1235,6 +1276,13 @@ public class SimSettings {
 				taskDagLayers[i] = null;
 				taskDagPartitionWeights[i] = null;
 				taskTimeout[i] = 0;
+				// ONAT: defaults to this app's own 0-based position (same as its
+				// Task.getTaskType()) - only needs overriding via service_index if a
+				// scenario wants UAV service_capability lists (edge_devices.xml) to use
+				// labels other than plain applications.xml order.
+				taskServiceIndex[i] = i;
+				if(checkElement(appElement, "service_index"))
+					taskServiceIndex[i] = Integer.parseInt(appElement.getElementsByTagName("service_index").item(0).getTextContent().trim());
 				if(checkElement(appElement, "partitionable"))
 					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
 				if(checkElement(appElement, "partition_count"))
@@ -1313,6 +1361,8 @@ public class SimSettings {
 			edgeDevicesDoc = dBuilder.parse(devicesFile);
 			edgeDevicesDoc.getDocumentElement().normalize();
 
+			edgeHostServiceCapability = new ArrayList<int[]>();
+
 			NodeList datacenterList = edgeDevicesDoc.getElementsByTagName("datacenter");
 			for (int i = 0; i < datacenterList.getLength(); i++) {
 				NUM_OF_EDGE_DATACENTERS++;
@@ -1348,6 +1398,23 @@ public class SimSettings {
 					isElementPresent(hostElement, "mips");
 					isElementPresent(hostElement, "ram");
 					isElementPresent(hostElement, "storage");
+
+					// ONAT: optional UAV service-capability restriction - a comma
+					// separated list of app service_index values (see
+					// SimSettings.getTaskServiceIndex()) this host's UAV is allowed to
+					// run. Absent/empty (the default) means UNRESTRICTED - this UAV can
+					// run every app, preserving pre-existing "every UAV can run every
+					// task" behavior for any edge_devices.xml that doesn't set it (see
+					// UAV.canServeTaskType()/UAVEdgeOrchestrator.getUAVToOffloadTo()).
+					int[] serviceCapability = null;
+					if(checkElement(hostElement, "service_capability")) {
+						String capabilityText = hostElement.getElementsByTagName("service_capability").item(0).getTextContent();
+						List<String> capabilityTokens = splitTopLevelCommaList(capabilityText);
+						serviceCapability = new int[capabilityTokens.size()];
+						for(int c=0; c<capabilityTokens.size(); c++)
+							serviceCapability[c] = Integer.parseInt(capabilityTokens.get(c).trim());
+					}
+					edgeHostServiceCapability.add(serviceCapability);
 
 					NodeList vmList = hostElement.getElementsByTagName("VM");
 					for (int k = 0; k < vmList.getLength(); k++) {
