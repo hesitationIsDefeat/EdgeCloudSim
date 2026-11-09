@@ -21,11 +21,12 @@ public class UAV extends EdgeHost {
     // ONAT: Assumed to be at least 125
     public static int SERVICE_RADIUS = 100; // m
 
-    // ONAT: service-capability restriction (edge_devices.xml's optional
-    // <service_capability> host tag) - the list of app service_index values (see
-    // SimSettings.getTaskServiceIndex()) this UAV is allowed to run. null/empty (the
-    // default, when the tag is absent for this host) means UNRESTRICTED: this UAV can
-    // run every app, preserving the original "every UAV can run every task" behavior.
+    // ONAT: service-capability restriction - the list of app service_index values (see
+    // SimSettings.getTaskServiceIndex()) this UAV is allowed to run. Either read from
+    // edge_devices.xml's optional <service_capability> host tag, or supplied by a
+    // ServicePlacementPolicy. null/empty (the default, when neither sets it for this host)
+    // means UNRESTRICTED: this UAV can run every app, preserving the original "every
+    // UAV can run every task" behavior.
     private final int[] serviceCapability;
 
     /**
@@ -42,15 +43,28 @@ public class UAV extends EdgeHost {
      * @param vmScheduler    VM scheduling policy for this host
      */
     public UAV(int id, RamProvisioner ramProvisioner, BwProvisioner bwProvisioner, long storage, List<? extends Pe> peList, VmScheduler vmScheduler) {
-        super(id, ramProvisioner, bwProvisioner, storage, peList, vmScheduler);
-        this.mobilityInterval = SimSettings.getInstance().getUavMobilityInterval();
-        this.speed = 15;
-        this.maxMoveDistance = this.speed * mobilityInterval;
         // ONAT: looked up by this UAV's own host id, which - across every
         // EdgeServerManager implementation - is assigned in the exact same
         // datacenter-then-host document order used by SimSettings.parseEdgeDevicesXML()
         // to build edgeHostServiceCapability, so index id always matches this host.
-        this.serviceCapability = SimSettings.getInstance().getHostServiceCapability(id);
+        this(id, ramProvisioner, bwProvisioner, storage, peList, vmScheduler,
+                SimSettings.getInstance().getHostServiceCapability(id));
+    }
+
+    /**
+     * Same as the constructor above, but with this UAV's service capability supplied
+     * explicitly (e.g. computed by a {@link ServicePlacementPolicy}) instead of read from
+     * edge_devices.xml's {@code service_capability} tag.
+     *
+     * @param serviceCapability the app service_index values this UAV may run; null/empty
+     *                          means unrestricted
+     */
+    public UAV(int id, RamProvisioner ramProvisioner, BwProvisioner bwProvisioner, long storage, List<? extends Pe> peList, VmScheduler vmScheduler, int[] serviceCapability) {
+        super(id, ramProvisioner, bwProvisioner, storage, peList, vmScheduler);
+        this.mobilityInterval = SimSettings.getInstance().getUavMobilityInterval();
+        this.speed = 15;
+        this.maxMoveDistance = this.speed * mobilityInterval;
+        this.serviceCapability = serviceCapability;
     }
 
     public double getMaxMoveDistance() {
