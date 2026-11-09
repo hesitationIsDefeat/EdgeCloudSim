@@ -2,7 +2,7 @@
 # Activates the shared venv (tutorial6/python/.venv) and runs plot.sh for the listed tutorial numbers.
 # Edit TUTORIALS below to choose which tutorials to plot.
 
-TUTORIALS=(15)
+TUTORIALS=(17)
 
 # Non-interactive backend so plt.show() doesn't pop up a window and block each script.
 export MPLBACKEND=Agg
