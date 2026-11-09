@@ -3,15 +3,13 @@
     <!-- ONAT: 4 datacenters (one per map quadrant), 4 UAVs each = 16 UAVs total,
          matching tutorial10's layout - spread across the whole map since users move
          with a random walk (no convergence zone) rather than gathering at fixed spots.
-         Every host below explicitly declares service_capability "0,1,2,3" (see
-         applications.xml's 4 SERVICE_APP_* apps and their service_index), i.e. every
-         single UAV may run ANY app - functionally equivalent to leaving the tag off
-         entirely (unrestricted, the framework default), but kept explicit here to
-         demonstrate that a service_capability list may name more than one index, not
-         just the single-entry form shown elsewhere in this project. A task can still
-         be rejected (REJECTED_DUE_TO_VM_CAPACITY) if no UAV is within SERVICE_RADIUS or
-         every in-range UAV is already at capacity - just never for a service-capability
-         mismatch. -->
+         No host declares a service_capability here: which of applications.xml's 4
+         SERVICE_APP_* services (see their service_index) each UAV hosts is decided by
+         the service placement policy swept via default_config.properties'
+         service_placement_policies (see ServicePlacementPolicy), which overrides any
+         service_capability tag in this file. UAVs are numbered in the order they appear
+         below. A task can be rejected (REJECTED_DUE_TO_VM_CAPACITY) if no UAV hosting
+         its service is within SERVICE_RADIUS or every such UAV is already at capacity. -->
     <datacenter arch="ARM" os="Linux" vmm="KVM">
         <costPerBw>0.5</costPerBw>
         <costPerSec>15.0</costPerSec>
@@ -31,12 +29,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()).
-                     Listed here as "0,1,2,3" (every app) rather than omitted. -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -52,11 +44,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -72,11 +59,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -92,11 +74,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -128,11 +105,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -148,11 +120,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -168,11 +135,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -188,11 +150,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -224,11 +181,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -244,11 +196,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -264,11 +211,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -284,11 +226,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -320,11 +257,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -340,11 +272,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -360,11 +287,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
@@ -380,11 +302,6 @@
                 <mips>5000</mips>
                 <ram>16384</ram>
                 <storage>128000</storage>
-                <!-- ONAT: service_capability restricts this UAV to only the listed
-                     application service_index value(s) (see applications.xml) - a task
-                     whose app isn't in this list is never offloaded to this UAV, even
-                     if it is otherwise in range and idle (see UAV.canServeTaskType()). -->
-                <service_capability>0,1,2,3</service_capability>
                 <VMs>
                     <VM vmm="KVM">
                         <core>1</core>
