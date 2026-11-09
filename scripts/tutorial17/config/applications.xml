@@ -2,18 +2,18 @@
 <applications>
 	<!-- ONAT: tutorial17's 4 applications are otherwise IDENTICAL (same timing/size/
 	     utilization parameters) - the only thing that differs between them is name and
-	     service_index. service_index is the label edge_devices.xml's per-host
-	     <service_capability> lists reference to restrict a UAV to only some apps (see
-	     SimSettings.getTaskServiceIndex()/UAV.canServeTaskType()); it defaults to an
-	     app's own 0-based position in this file when omitted, but is set explicitly
-	     here (0,1,2,3) so the correspondence between an app and the number edge_devices.xml
-	     uses for it is visible directly in this file, exactly as it is in edge_devices.xml.
+	     service_index. service_index is the label a UAV's service capability is expressed
+	     in (see SimSettings.getTaskServiceIndex()/UAV.canServeTaskType()): the service
+	     placement policy (default_config.properties' service_placement_policies, see
+	     ServicePlacementPolicy) decides which service_index values each UAV hosts. It
+	     defaults to an app's own 0-based position in this file when omitted, but is set
+	     explicitly here (0,1,2,3) so the label of each app is visible directly in this file.
 	     usage_percentage=25 for every app means a user is equally likely to generate any
 	     one of the 4 app types, so every service_index is exercised by roughly the same
-	     offered load. A task whose app has no in-range, capable UAV (see
-	     edge_devices.xml) is rejected (REJECTED_DUE_TO_VM_CAPACITY) exactly like a task
-	     that doesn't fit a UAV's remaining capacity - that is the "fails if none
-	     available" behavior this tutorial demonstrates. -->
+	     offered load. A task whose app is hosted by no in-range UAV is rejected
+	     (REJECTED_DUE_TO_VM_CAPACITY) exactly like a task that doesn't fit a UAV's
+	     remaining capacity - that is the "fails if none available" behavior this
+	     tutorial demonstrates. -->
 	<application name="SERVICE_APP_0">
 		<service_index>0</service_index>
 		<usage_percentage>25</usage_percentage>
