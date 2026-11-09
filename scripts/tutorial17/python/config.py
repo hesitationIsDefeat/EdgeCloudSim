@@ -1,9 +1,11 @@
 import os
 import xml.etree.ElementTree as ET
 
-# ONAT: single source of truth is default_config.properties's uav_mobility_options -
-# scenario_types/legends/colors/markers below are all derived from it, so adding a new
-# centralized policy there is enough; no python changes needed.
+# ONAT: tutorial17 compares SERVICE PLACEMENT policies, so every plot has one line per entry
+# of default_config.properties's service_placement_policies (legends/colors/markers below
+# are all derived from it - adding a new policy there is enough; no python changes needed).
+# The UAV mobility option is held fixed (the first uav_mobility_options entry) and only
+# appears in the SIMRESULT_*_<MOBILITY>_<PLACEMENT>_* file names MainApp.java writes.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
 _APPLICATIONS_XML_PATH = os.path.join(_CONFIG_DIR, 'applications.xml')
@@ -31,6 +33,20 @@ def _parse_uav_mobility_options(properties_path):
             if line.startswith('uav_mobility_options='):
                 return [opt.strip() for opt in line.split('=', 1)[1].split(',') if opt.strip()]
     raise ValueError(f"uav_mobility_options not found in {properties_path}")
+
+
+def _parse_service_placement_policies(properties_path):
+    """
+    Reads the comma separated service_placement_policies list from default_config.properties.
+    Falls back to ALL when absent, mirroring SimSettings (Java)'s default.
+    """
+    with open(properties_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('service_placement_policies='):
+                policies = [p.strip() for p in line.split('=', 1)[1].split(',') if p.strip()]
+                return policies or ['ALL']
+    return ['ALL']
 
 
 def _parse_property(properties_path, key):
@@ -108,8 +124,17 @@ def get_configuration():
     Returns a dictionary containing all simulation and plotting parameters.
     Equivalent to getConfiguration.m.
     """
-    scenario_types = _parse_uav_mobility_options(_PROPERTIES_PATH)
-    legends = list(scenario_types)
+    mobility_options = _parse_uav_mobility_options(_PROPERTIES_PATH)
+    mobility_option = mobility_options[0]
+    if len(mobility_options) > 1:
+        print(f"Warning: plotting only the first uav_mobility_options entry ({mobility_option}); "
+              f"ignoring {', '.join(mobility_options[1:])}")
+    placement_policies = _parse_service_placement_policies(_PROPERTIES_PATH)
+    # ONAT: one line per service placement policy. The scenario name is the
+    # "<MOBILITY>_<PLACEMENT>" segment embedded in every SIMRESULT_* file name, while the
+    # legend only shows the placement policy, since that is what the lines compare.
+    scenario_types = [f'{mobility_option}_{p}' for p in placement_policies]
+    legends = list(placement_policies)
     num_scenarios = len(scenario_types)
     application_names = _get_application_names(_APPLICATIONS_XML_PATH)
 
@@ -138,7 +163,7 @@ def get_configuration():
         # (see default_config.properties) - this filter is a no-op here but left in
         # place so pasting a NO/RANDOM entry back in for comparison doesn't also need a
         # python change.
-        'heatmap_video_scenarios': [s for s in scenario_types if s not in ('NO', 'RANDOM')],
+        'heatmap_video_scenarios': [] if mobility_option in ('NO', 'RANDOM') else list(scenario_types),
         'use_scientific_notation_x_axis': False, # For future use
         'save_figure_as_pdf': True,
         'plot_confidence_interval': True,

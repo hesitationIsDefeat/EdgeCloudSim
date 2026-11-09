@@ -144,7 +144,8 @@ def _parse_args():
     parser = argparse.ArgumentParser(
         description='Generate a video of the client density heat map over the course of the simulation.')
     parser.add_argument('--scenario', default=None, choices=config['scenario_types'],
-                         help='UAV mobility policy to visualize. If omitted, a video is generated for every policy.')
+                         help='Run to visualize, written <MOBILITY>_<PLACEMENT> (e.g. PRIORITY_KMEANS_SINGLE). '
+                              'If omitted, a video is generated for every service placement policy.')
     parser.add_argument('--num-devices', type=int, nargs='+', default=None,
                          help='Number(s) of mobile devices of the simulation to visualize. '
                               "If omitted, videos are generated for config.py's heatmap_video_devices list.")
