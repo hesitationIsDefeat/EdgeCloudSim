@@ -113,7 +113,9 @@ public class SimSettings {
 	private String[] SIMULATION_SCENARIOS;
 	private String[] ORCHESTRATOR_POLICIES;
     private String[] UAV_MOBILITY_OPTIONS;
-	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
+	// ONAT: service placement policies to compare in one run (e.g. tutorial17's
+	// "SINGLE,ALL") - see getServicePlacementPolicies() and edge_server/uav/ServicePlacementPolicy.
+	private String[] SERVICE_PLACEMENT_POLICIES;	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
 	private double UAV_MOBILITY_INTERVAL;
 	// ONAT: How often (seconds) a centralized controller decides new UAV targets - see
 	// mobility/uav/CentralizedUAVMobility. Independent from UAV_MOBILITY_INTERVAL (used by
@@ -351,6 +353,12 @@ public class SimSettings {
 			// in one run (tutorial16) - empty (no entries) when not set.
 			VM_UTILIZATION_POLICIES = splitTopLevelCommaList(prop.getProperty("vm_utilization_policies", ""))
 					.toArray(new String[0]);
+
+			// ONAT: only used by tutorials that decide UAV service capabilities via a
+			// placement policy (tutorial17+). Defaults to ALL (every UAV hosts every
+			// service), i.e. the framework's original unrestricted behavior.
+			SERVICE_PLACEMENT_POLICIES = splitTopLevelCommaList(prop.getProperty("service_placement_policies", "ALL"))
+					.stream().map(String::trim).filter(policy -> !policy.isEmpty()).toArray(String[]::new);
 
 			// ONAT: Policy used to assign mobile devices to a converging meeting area (ROUND_ROBIN or CLOSEST)
 			MEETING_POINT_ASSIGNMENT_POLICY = prop.getProperty("meeting_point_assignment_policy", "ROUND_ROBIN").trim().toUpperCase();
@@ -714,6 +722,15 @@ public class SimSettings {
     public String[] getUAVMobilityOptions()
     {
         return UAV_MOBILITY_OPTIONS;
+    }
+
+    /**
+     * returns the service placement policies (e.g. SINGLE, ALL) that decide which
+     * services each UAV hosts - see edge_server/uav/ServicePlacementPolicy
+     */
+    public String[] getServicePlacementPolicies()
+    {
+        return SERVICE_PLACEMENT_POLICIES;
     }
 
     /**
