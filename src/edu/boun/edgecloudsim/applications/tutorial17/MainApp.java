@@ -15,23 +15,22 @@
 //          3.1.1) For each simulation scenario
 //                  3.1.1.1) For each orchestrator policy
 //                             3.1.1.1.1) For each UAV mobility option
-//                             - Initialize CloudSim
-//                             - Build scenario factory
-//                             - Create SimManager
-//                             - Run simulation
-//                             - Log results and duration
+//                              3.1.1.1.1.1) For each service placement policy
+//                              - Initialize CloudSim
+//                              - Build scenario factory
+//                              - Create SimManager
+//                              - Run simulation
+//                              - Log results and duration
 // 4) Print total elapsed time
 
-// ONAT: tutorial17 demonstrates per-UAV SERVICE CAPABILITY restriction: edge_devices.xml
-// may declare a <service_capability> list of application service_index values (see
-// applications.xml's own service_index tag) on any <host>, restricting that UAV to only
-// the app(s) listed - a task whose app isn't in any in-range UAV's list simply fails
-// (REJECTED_DUE_TO_VM_CAPACITY, same as any other "no suitable VM found" case), exactly
-// like a UAV that's at full capacity. A host without the tag remains UNRESTRICTED (can
-// run every app), preserving the pre-existing "every UAV can run every task" default
-// for every other tutorial. applications.xml defines 4 otherwise-identical applications,
-// each with a different service_index, so a single swept user population exercises
-// every combination.
+// ONAT: tutorial17 compares SERVICE PLACEMENT policies: which application services each
+// UAV hosts is decided by a policy (ServicePlacementPolicy, swept via
+// service_placement_policies in default_config.properties - currently SINGLE and ALL)
+// instead of hard-coded <service_capability> lists in edge_devices.xml. A task whose app
+// isn't hosted by any in-range UAV simply fails (REJECTED_DUE_TO_VM_CAPACITY, same as
+// any other "no suitable VM found" case), exactly like a UAV that's at full capacity.
+// applications.xml defines 4 otherwise-identical applications, each with a different
+// service_index, so a single swept user population exercises every service.
 // Users move with a plain random walk (tutorial6's SampleMobilityModel - no convergence
 // onto any meeting zone), while a fleet of UAVs is actively repositioned by one of
 // several CENTRALIZED mobility policies (CentralizedUAVMobility), swept via
@@ -53,6 +52,7 @@ import org.cloudbus.cloudsim.core.CloudSim;
 import edu.boun.edgecloudsim.core.ScenarioFactory;
 import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
+import edu.boun.edgecloudsim.edge_server.uav.ServicePlacementPolicy;
 import edu.boun.edgecloudsim.utils.SimLogger;
 import edu.boun.edgecloudsim.utils.SimUtils;
 
@@ -115,6 +115,15 @@ public class MainApp {
             System.exit(0);
         }
 
+        // Fail before any scenario runs rather than part way through the sweep
+        for (String servicePlacementPolicy : SS.getServicePlacementPolicies()) {
+            if (!ServicePlacementPolicy.isSupported(servicePlacementPolicy)) {
+                SimLogger.printLine("unknown service placement policy '" + servicePlacementPolicy
+                        + "' (supported: " + ServicePlacementPolicy.SUPPORTED_POLICIES + ")");
+                System.exit(0);
+            }
+        }
+
         // Prepare date formatter for human-readable logging timestamps
         DateFormat df = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
         Date SimulationStartDate = Calendar.getInstance().getTime();
@@ -167,57 +176,61 @@ public class MainApp {
                     {
                         // Evaluate each centralized UAV mobility policy under the active scenario
                         for (int u=0; u<SS.getUAVMobilityOptions().length; u++) {
-                            // Extract current test dimensions
-                            String simScenario = SS.getSimulationScenarios()[k];
-                            String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
-                            String uavMobilityOption = SS.getUAVMobilityOptions()[u];
-                            Date ScenarioStartDate = Calendar.getInstance().getTime();
-                            now = df.format(ScenarioStartDate);
+                            // Evaluate each service placement policy under the active UAV mobility policy
+                            for (int s=0; s<SS.getServicePlacementPolicies().length; s++) {
+                                // Extract current test dimensions
+                                String simScenario = SS.getSimulationScenarios()[k];
+                                String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
+                                String uavMobilityOption = SS.getUAVMobilityOptions()[u];
+                                String servicePlacementPolicy = SS.getServicePlacementPolicies()[s];
+                                Date ScenarioStartDate = Calendar.getInstance().getTime();
+                                now = df.format(ScenarioStartDate);
 
-                            // Log scenario header summarizing experimental factors
-                            SimLogger.printLine("Scenario started at " + now);
-                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
-                            SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #users: " + j);
-                            // Warm-up period: tasks started during it are excluded from the result statistics.
-                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + uavMobilityOption + "_" + j + "DEVICES");
+                                // Log scenario header summarizing experimental factors
+                                SimLogger.printLine("Scenario started at " + now);
+                                SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - UAV Mobility: " + uavMobilityOption + " - Service Placement: " + servicePlacementPolicy + " - #iteration: " + iterationNumber);
+                                SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #users: " + j);
+                                // Warm-up period: tasks started during it are excluded from the result statistics.
+                                SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + uavMobilityOption + "_" + servicePlacementPolicy + "_" + j + "DEVICES");
 
-                            try
-                            {
-                                // Minimal event granularity (0.01) chosen to avoid zero-time collisions
-                                // CloudSim core init:
-                                // num_user: logical users generating events (broker etc.)
-                                // calendar: base time reference
-                                // trace_flag: enable event tracing (disabled for performance)
-                                // last param: minimal time between events (precision)
-                                int num_user = 2;   // number of grid users
-                                Calendar calendar = Calendar.getInstance();
-                                boolean trace_flag = false;  // mean trace events
+                                try
+                                {
+                                    // Minimal event granularity (0.01) chosen to avoid zero-time collisions
+                                    // CloudSim core init:
+                                    // num_user: logical users generating events (broker etc.)
+                                    // calendar: base time reference
+                                    // trace_flag: enable event tracing (disabled for performance)
+                                    // last param: minimal time between events (precision)
+                                    int num_user = 2;   // number of grid users
+                                    Calendar calendar = Calendar.getInstance();
+                                    boolean trace_flag = false;  // mean trace events
 
-                                // Initialize the CloudSim library
-                                CloudSim.init(num_user, calendar, trace_flag, 0.01);
+                                    // Initialize the CloudSim library
+                                    CloudSim.init(num_user, calendar, trace_flag, 0.01);
 
-                                // ScenarioFactory encapsulates workload, mobility, network, placement etc.
-                                ScenarioFactory sampleFactory = new SampleScenarioFactory(j, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption);
+                                    // ScenarioFactory encapsulates workload, mobility, network, placement etc.
+                                    ScenarioFactory sampleFactory = new SampleScenarioFactory(j, SS.getSimulationTime(), orchestratorPolicy, simScenario, uavMobilityOption, servicePlacementPolicy);
 
-                                // SimManager wires all components, schedules events, and aggregates stats.
-                                SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
-                                // Kick off discrete-event simulation (blocking until completion)
-                                manager.startSimulation();
+                                    // SimManager wires all components, schedules events, and aggregates stats.
+                                    SimManager manager = new SimManager(sampleFactory, j, simScenario, orchestratorPolicy);
+                                    // Kick off discrete-event simulation (blocking until completion)
+                                    manager.startSimulation();
+                                }
+                                catch (Exception e)
+                                {
+                                    // Crash-fast strategy prevents partial mixed-result datasets
+                                    // Any uncaught exception here invalidates experimental run
+                                    SimLogger.printLine("The simulation has been terminated due to an unexpected error");
+                                    e.printStackTrace();
+                                    System.exit(0);
+                                }
+
+                                // Log per-scenario duration (excludes previous scenarios)
+                                Date ScenarioEndDate = Calendar.getInstance().getTime();
+                                now = df.format(ScenarioEndDate);
+                                SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
+                                SimLogger.printLine("----------------------------------------------------------------------");
                             }
-                            catch (Exception e)
-                            {
-                                // Crash-fast strategy prevents partial mixed-result datasets
-                                // Any uncaught exception here invalidates experimental run
-                                SimLogger.printLine("The simulation has been terminated due to an unexpected error");
-                                e.printStackTrace();
-                                System.exit(0);
-                            }
-
-                            // Log per-scenario duration (excludes previous scenarios)
-                            Date ScenarioEndDate = Calendar.getInstance().getTime();
-                            now = df.format(ScenarioEndDate);
-                            SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
-                            SimLogger.printLine("----------------------------------------------------------------------");
                         }
                     }//End of orchestrators loop
                 }//End of scenarios loop

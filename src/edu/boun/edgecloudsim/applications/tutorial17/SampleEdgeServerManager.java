@@ -5,10 +5,10 @@
  * SampleEdgeServerManager is responsible for creating datacenters, hosts (UAVs) and VMs.
  * It also provides the list of VMs running on the hosts.
  * This information is critical for the edge orchestrator.
- * Copied from tutorial16's SampleEdgeServerManager. Each UAV's optional
- * edge_devices.xml <service_capability> restriction (see SimSettings.
- * getHostServiceCapability()) is read directly by the UAV constructor itself - no
- * changes are needed here to support it.
+ * Copied from tutorial16's SampleEdgeServerManager. Each UAV's service capability is
+ * not read from edge_devices.xml here but computed by the configured
+ * ServicePlacementPolicy (see default_config.properties' service_placement_policies)
+ * and handed to the UAV when it is created.
  * 
  * Licence:      GPL - http://www.gnu.org/copyleft/gpl.html
  * Copyright (c) 2017, Bogazici University, Istanbul, Turkey
@@ -22,8 +22,10 @@ import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
 import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.edge_server.EdgeVmAllocationPolicy_Custom;
+import edu.boun.edgecloudsim.edge_server.uav.ServicePlacementPolicy;
 import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.utils.Location;
+import edu.boun.edgecloudsim.utils.SimLogger;
 import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.*;
 import org.cloudbus.cloudsim.core.CloudSim;
@@ -51,8 +53,14 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 	private int hostIdCounter; // globally unique incremental host id across all datacenters
 	// ONAT: max random offset (m) applied to each host's starting position - see createHosts.
 	private static final int HOST_POSITION_OFFSET_RANGE = 100;
+	// ONAT: decides which services each UAV hosts (see createHosts)
+	private final ServicePlacementPolicy servicePlacementPolicy;
+	// ONAT: service_index values hosted by every UAV, indexed by host id - computed once
+	// in startDatacenters() from servicePlacementPolicy
+	private int[][] servicePlacement;
 
-	public SampleEdgeServerManager() {
+	public SampleEdgeServerManager(ServicePlacementPolicy servicePlacementPolicy) {
+		this.servicePlacementPolicy = servicePlacementPolicy;
 		hostIdCounter = 0; // reset for each simulation run
 	}
 
@@ -67,6 +75,12 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 	}
 	
 	public void startDatacenters() throws Exception{
+		// ONAT: host ids are assigned in datacenter-then-host document order (hostIdCounter),
+		// so the placement for UAV id i is servicePlacement[i]
+		servicePlacement = servicePlacementPolicy.place(SimSettings.getInstance().getNumOfEdgeHosts());
+		// leading newline: SimManager has just printed "... is starting..." without ending the line
+		SimLogger.printLine("\nService placement (" + servicePlacementPolicy.getPolicyName() + "): " + ServicePlacementPolicy.describe(servicePlacement));
+
 		// Parse <datacenter> nodes and build each datacenter with its host list
 		Document doc = SimSettings.getInstance().getEdgeDevicesDocument();
 		NodeList datacenterList = doc.getElementsByTagName("datacenter");
@@ -256,7 +270,8 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 					new BwProvisionerSimple(bandwidth), //kbps
 					storage,
 					peList,
-					new VmSchedulerSpaceShared(peList)
+					new VmSchedulerSpaceShared(peList),
+					servicePlacement[hostIdCounter]
 				);
 			
 			// ONAT: jitter each host within HOST_POSITION_OFFSET_RANGE so UAVs sharing a

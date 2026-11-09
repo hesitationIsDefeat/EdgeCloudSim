@@ -21,6 +21,7 @@ import edu.boun.edgecloudsim.edge_client.mobile_processing_unit.MobileServerMana
 import edu.boun.edgecloudsim.edge_orchestrator.EdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_orchestrator.uav.UAVEdgeOrchestrator;
 import edu.boun.edgecloudsim.edge_server.EdgeServerManager;
+import edu.boun.edgecloudsim.edge_server.uav.ServicePlacementPolicy;
 import edu.boun.edgecloudsim.mobility.MobilityModel;
 import edu.boun.edgecloudsim.mobility.uav.CentralizedUAVMobility;
 import edu.boun.edgecloudsim.mobility.uav.UAVMobilityModel;
@@ -35,11 +36,11 @@ import edu.boun.edgecloudsim.task_generator.LoadGeneratorModel;
  * {@link SampleMobilityModel}, reused directly from tutorial6) served by a fleet of
  * UAVs (see edge_devices.xml) under a swept {@link CentralizedUAVMobility} policy (see
  * {@link MainApp}: every real centralized policy except NO/RANDOM). Every user picks
- * among 4 otherwise-identical applications (see applications.xml), each restricted by
- * edge_devices.xml's per-UAV {@code service_capability} list to only the UAVs declared
- * capable of running it - see {@code UAV.canServeTaskType()} /
- * {@code UAVEdgeOrchestrator.getUAVToOffloadTo()} for the actual matching/admission
- * logic this tutorial demonstrates.
+ * among 4 otherwise-identical applications (see applications.xml); which UAVs host which
+ * application is decided by a swept {@link ServicePlacementPolicy} (see
+ * default_config.properties' service_placement_policies) - see
+ * {@code UAV.canServeTaskType()} / {@code UAVEdgeOrchestrator.getUAVToOffloadTo()} for
+ * the actual matching/admission logic this tutorial demonstrates.
  */
 public class SampleScenarioFactory implements ScenarioFactory {
 	private final int numOfMobileDevices;
@@ -47,6 +48,7 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	private final String orchestratorPolicy;
 	private final String simScenario;
 	private final String uavMobilityOption;
+	private final String servicePlacementPolicy;
 	
 	/**
 	 * Constructor for sample scenario factory.
@@ -56,17 +58,20 @@ public class SampleScenarioFactory implements ScenarioFactory {
 	 * @param _orchestratorPolicy Orchestrator policy for task offloading decisions
 	 * @param _simScenario Simulation scenario type (e.g., SINGLE_TIER, TWO_TIER)
 	 * @param _uavMobilityOption Centralized UAV mobility variant (e.g., PRIORITY_KMEANS)
+	 * @param _servicePlacementPolicy Service placement policy deciding which services each UAV hosts (e.g., SINGLE, ALL)
 	 */
 	SampleScenarioFactory(int _numOfMobileDevices,
 						  double _simulationTime,
 						  String _orchestratorPolicy,
 						  String _simScenario,
-						  String _uavMobilityOption){
+						  String _uavMobilityOption,
+						  String _servicePlacementPolicy){
 		orchestratorPolicy = _orchestratorPolicy;
 		numOfMobileDevices = _numOfMobileDevices;
 		simulationTime = _simulationTime;
 		simScenario = _simScenario;
 		uavMobilityOption = _uavMobilityOption;
+		servicePlacementPolicy = _servicePlacementPolicy;
 	}
 	
 	/**
@@ -81,8 +86,8 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates edge orchestrator for task offloading decisions.
-	 * @return UAVEdgeOrchestrator, whose admission check also rejects a UAV that isn't
-	 * declared capable of the task's app (see edge_devices.xml's service_capability)
+	 * @return UAVEdgeOrchestrator, whose admission check also rejects a UAV that doesn't
+	 * host the task's app (see ServicePlacementPolicy)
 	 */
 	@Override
 	public EdgeOrchestrator getEdgeOrchestrator() {
@@ -110,11 +115,12 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates edge server manager for managing edge computing resources.
-	 * @return SampleEdgeServerManager, which builds UAV hosts
+	 * @return SampleEdgeServerManager, which builds UAV hosts and gives each one the
+	 * services chosen by the service placement policy
 	 */
 	@Override
 	public EdgeServerManager getEdgeServerManager() {
-		return new SampleEdgeServerManager();
+		return new SampleEdgeServerManager(new ServicePlacementPolicy(servicePlacementPolicy));
 	}
 
 	/**
