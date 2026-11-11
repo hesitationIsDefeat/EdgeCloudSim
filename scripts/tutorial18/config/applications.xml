@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<applications>
+	<!-- ONAT: tutorial18's 4 applications are the SERVICES of the streams in streams.xml (a
+	     stream is a DAG whose nodes are applications) and can also be requested on their own.
+	     Their workload parameters (length, data sizes, utilization, ...) are identical - what
+	     differs is how each one is used:
+	     - SERVICE_APP_0: requested on its own (usage_percentage 20) and a node of
+	       SURVEILLANCE_STREAM. Its task_timeout only applies to those standalone requests.
+	     - SERVICE_APP_1: requested on its own (usage_percentage 20) and a node of
+	       SURVEILLANCE_STREAM, and itself a DAG of sub-tasks (dag_layers 1,2,1): whether fired
+	       alone or as a stream node it runs as that 4-sub-task DAG, every sub-task needing a UAV
+	       hosting this service.
+	     - SERVICE_APP_2 / SERVICE_APP_3: usage_percentage 0, i.e. never requested on their own -
+	       they exist only as nodes of the streams (their active/idle/poisson values below are
+	       never used).
+	     usage_percentage is the share of devices that request this application on its own; the
+	     applications' and the streams' shares (streams.xml) together add up to 100.
+	     As a stream node, an application's usage_percentage, poisson_interarrival, active_period,
+	     idle_period and task_timeout have NO effect - the stream's own values (streams.xml)
+	     decide when it is requested and how long it may take. service_index labels the service a
+	     UAV hosts (see ServicePlacementPolicy); a node whose service no in-range UAV hosts fails
+	     (REJECTED_DUE_TO_VM_CAPACITY) and with it the whole stream. -->
+	<application name="SERVICE_APP_0">
+		<service_index>0</service_index>
+		<usage_percentage>20</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<task_timeout>8</task_timeout>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_1">
+		<service_index>1</service_index>
+		<usage_percentage>20</usage_percentage>
+		<dag_layers>1,2,1</dag_layers>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_2">
+		<service_index>2</service_index>
+		<usage_percentage>0</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="SERVICE_APP_3">
+		<service_index>3</service_index>
+		<usage_percentage>0</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>50</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>

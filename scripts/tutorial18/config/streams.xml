@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<streams>
+	<!-- ONAT: a stream is a DAG whose nodes are applications (services) from applications.xml
+	     instead of sub-tasks. It is written like an application with dag_layers, but only has
+	     the fields a stream needs:
+	       usage_percentage     share (%) of devices whose request type is this stream; together with
+	                            the applications' usage_percentage (applications.xml) it adds up to 100
+	       poisson_interarrival mean seconds between this stream's requests while a device is active
+	       active_period        seconds a device keeps requesting the stream ...
+	       idle_period          ... then stays silent before the next active period
+	       task_timeout         (optional) soft timeout of the WHOLE stream in seconds - when it
+	                            elapses, nodes already running are NOT cut short: they finish, no
+	                            further layer starts, and the stream is logged TIMED_OUT (failed)
+	                            once the last of them has ended; 0/absent = no timeout
+	       dag_layers           parallel nodes per layer, e.g. 1,2,1 - layer L starts only once every
+	                            node of layer L-1 has completed and its output has been relayed
+	                            between UAVs (uav_bandwidth, like the layers of a DAG application)
+	       dag_services         the application (by name) every node runs, per layer: a bare name
+	                            for a one-node layer, a parenthesized list for a wider one
+	     These values belong to the stream alone: the applications it runs ignore their own
+	     usage_percentage/active_period/idle_period/poisson_interarrival/task_timeout while they
+	     are nodes of it. Each node is placed on an in-range UAV hosting its service when its
+	     layer is released - or dropped, which fails the whole stream. -->
+	<stream name="SURVEILLANCE_STREAM">
+		<usage_percentage>30</usage_percentage>
+		<poisson_interarrival>100</poisson_interarrival>
+		<active_period>60</active_period>
+		<idle_period>30</idle_period>
+		<task_timeout>20</task_timeout>
+		<dag_layers>1,2,1</dag_layers>
+		<dag_services>SERVICE_APP_0, (SERVICE_APP_1, SERVICE_APP_2), SERVICE_APP_3</dag_services>
+	</stream>
+	<stream name="MONITORING_STREAM">
+		<usage_percentage>30</usage_percentage>
+		<poisson_interarrival>80</poisson_interarrival>
+		<active_period>45</active_period>
+		<idle_period>0</idle_period>
+		<dag_layers>1,1</dag_layers>
+		<dag_services>SERVICE_APP_2, SERVICE_APP_3</dag_services>
+	</stream>
+</streams>
