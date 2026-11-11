@@ -243,6 +243,23 @@ public class SimSettings {
 	 * keep working unchanged. */
 	private int[] taskServiceIndex = null;
 
+	// ONAT: stream (DAG of applications/services) definitions parsed from streams.xml -
+	// see parseStreamsXML(). All arrays are indexed by the stream's 0-based position in
+	// the file and are empty (length 0) when no streams file was given, so every scenario
+	// that predates streams sees zero streams. A stream's "task type" (the value
+	// TaskProperty.getTaskType()/SimLogger use for it) is numOfApplications + its index,
+	// i.e. streams are numbered right after the applications - see getStreamTaskType().
+	private String[] streamNames = new String[0];
+	private double[] streamUsagePercentage = new double[0];
+	private double[] streamPoissonInterarrival = new double[0];
+	private double[] streamActivePeriod = new double[0];
+	private double[] streamIdlePeriod = new double[0];
+	/** Per-stream timeout (seconds, streams.xml's task_timeout) - 0 (default) disables it. */
+	private double[] streamTimeout = new double[0];
+	/** streamNodeApplications[s][L][n] is the applications.xml index of the application
+	 * that node n of layer L of stream s runs. */
+	private int[][][] streamNodeApplications = new int[0][][];
+
 	/** ONAT: per-edge-host service-capability restriction (edge_devices.xml's optional
 	 * service_capability tag on a &lt;host&gt;) - each entry is the list of app
 	 * service_index values (see taskServiceIndex above) that host's UAV is allowed to
@@ -291,6 +308,18 @@ public class SimSettings {
 	 * @return true if all configuration files loaded successfully, false otherwise
 	 */
 	public boolean initialize(String propertiesFile, String edgeDevicesFile, String applicationsFile){
+		return initialize(propertiesFile, edgeDevicesFile, applicationsFile, null);
+	}
+
+	/**
+	 * ONAT: same as above, plus the streams.xml file defining the streams (DAGs whose
+	 * nodes are applications) that mobile devices may request instead of a plain
+	 * application. It is parsed after applications.xml, since a stream's nodes refer to
+	 * applications by name.
+	 *
+	 * @param streamsFile Path to the streams configuration XML file, or null for no streams
+	 */
+	public boolean initialize(String propertiesFile, String edgeDevicesFile, String applicationsFile, String streamsFile){
 		boolean result = false;
 		InputStream input = null;
 		try {
@@ -409,6 +438,7 @@ public class SimSettings {
 			}
 		}
 		parseApplicationsXML(applicationsFile);
+		parseStreamsXML(streamsFile);
 		parseEdgeDevicesXML(edgeDevicesFile);
 
 		return result;
@@ -1014,14 +1044,113 @@ public class SimSettings {
 	}
 
 	/**
-	 * Returns the application name for a given task type index.
+	 * Returns the application name for a given task type index. ONAT: a stream's task
+	 * type (see getStreamTaskType()) resolves to the stream's name.
 	 * 
 	 * @param taskType Index of the task type in the lookup table
-	 * @return Name of the application type
+	 * @return Name of the application (or stream) type
 	 */
 	public String getTaskName(int taskType)
 	{
+		if(isStreamTaskType(taskType))
+			return streamNames[getStreamIndex(taskType)];
 		return taskNames[taskType];
+	}
+
+	/** ONAT: number of applications defined in applications.xml. */
+	public int getNumOfApplications()
+	{
+		return taskNames.length;
+	}
+
+	/** ONAT: number of streams defined in streams.xml (0 when no streams file was given). */
+	public int getNumOfStreams()
+	{
+		return streamNames.length;
+	}
+
+	/** ONAT: number of distinct task types a request can have - every application followed
+	 * by every stream (see getStreamTaskType()). This, not getTaskLookUpTable().length, is
+	 * the size to use for any per-task-type statistics that should also cover streams. */
+	public int getNumOfTaskTypes()
+	{
+		return taskNames.length + streamNames.length;
+	}
+
+	/** ONAT: true if this task type is a stream rather than a plain application. */
+	public boolean isStreamTaskType(int taskType)
+	{
+		return taskType >= taskNames.length;
+	}
+
+	/** ONAT: the task type a stream request carries (TaskProperty.getTaskType(), SimLogger) -
+	 * streams are numbered right after the applications. */
+	public int getStreamTaskType(int streamIndex)
+	{
+		return taskNames.length + streamIndex;
+	}
+
+	/** ONAT: the 0-based position in streams.xml of a stream task type (see isStreamTaskType()). */
+	public int getStreamIndex(int streamTaskType)
+	{
+		return streamTaskType - taskNames.length;
+	}
+
+	/** ONAT: false if this task type's usage_percentage is 0, i.e. no device is ever assigned
+	 * it as its own request type (an application with 0 can still be a node of a stream). */
+	public boolean isTaskTypeUsed(int taskType)
+	{
+		if(isStreamTaskType(taskType))
+			return streamUsagePercentage[getStreamIndex(taskType)] != 0;
+		return taskLookUpTable[taskType][0] != 0;
+	}
+
+	public String getStreamName(int streamIndex)
+	{
+		return streamNames[streamIndex];
+	}
+
+	/** ONAT: share (%) of devices whose request type is this stream, alongside the
+	 * applications' own usage_percentage values - see applications' column 0 in getTaskLookUpTable(). */
+	public double getStreamUsagePercentage(int streamIndex)
+	{
+		return streamUsagePercentage[streamIndex];
+	}
+
+	/** ONAT: mean inter-arrival time (seconds) of this stream's requests while a device is active. */
+	public double getStreamPoissonInterarrival(int streamIndex)
+	{
+		return streamPoissonInterarrival[streamIndex];
+	}
+
+	public double getStreamActivePeriod(int streamIndex)
+	{
+		return streamActivePeriod[streamIndex];
+	}
+
+	public double getStreamIdlePeriod(int streamIndex)
+	{
+		return streamIdlePeriod[streamIndex];
+	}
+
+	/** ONAT: the stream's own timeout (seconds) - the applications it runs never contribute
+	 * theirs while they are nodes of a stream. 0 means disabled. */
+	public double getStreamTimeout(int streamIndex)
+	{
+		return streamTimeout[streamIndex];
+	}
+
+	public boolean isStreamTimeoutEnabled(int streamIndex)
+	{
+		return streamTimeout[streamIndex] > 0;
+	}
+
+	/** ONAT: the stream's DAG in dependency order - result[L][n] is the applications.xml
+	 * index of the application node n of layer L runs. Layer L only starts once every node
+	 * of layer L-1 has completed; the nodes within a layer run in parallel. */
+	public int[][] getStreamNodeApplications(int streamIndex)
+	{
+		return streamNodeApplications[streamIndex];
 	}
 
 	/** ONAT: the service-capability index this task's app is identified by (see
@@ -1367,6 +1496,173 @@ public class SimSettings {
 			e.printStackTrace();
 			System.exit(1);
 		}
+	}
+
+	/**
+	 * ONAT: parses a streams.xml file - each {@code <stream name="...">} is a DAG whose nodes
+	 * are applications (by applications.xml name) instead of sub-tasks:
+	 * <pre>
+	 * usage_percentage     share (%) of devices whose request type is this stream (same
+	 *                      meaning as an application's, the two are drawn from together)
+	 * poisson_interarrival mean seconds between this stream's requests while a device is active
+	 * active_period        seconds a device keeps requesting this stream
+	 * idle_period          seconds it then stays silent before the next active period
+	 * task_timeout         (optional) soft timeout of the WHOLE stream in seconds, 0/absent = off
+	 * dag_layers           e.g. 1,2,1 - parallel nodes per layer, as in applications.xml
+	 * dag_services         e.g. A, (B, C), D - the application of every node, per layer; a
+	 *                      one-node layer is a bare name, a larger one is parenthesized
+	 * </pre>
+	 * Only these fields exist on a stream: while an application runs as a node of a stream,
+	 * its own usage_percentage/active_period/idle_period/poisson_interarrival/task_timeout have
+	 * no effect (the stream's values govern), only its workload (task_length, data_upload,
+	 * data_download, utilization, partitioning, ...) is used. A null/missing file means no streams.
+	 */
+	private void parseStreamsXML(String filePath)
+	{
+		streamNames = new String[0];
+		streamUsagePercentage = new double[0];
+		streamPoissonInterarrival = new double[0];
+		streamActivePeriod = new double[0];
+		streamIdlePeriod = new double[0];
+		streamTimeout = new double[0];
+		streamNodeApplications = new int[0][][];
+
+		if(filePath == null)
+			return;
+
+		try {
+			DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+			DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+			Document doc = dBuilder.parse(new File(filePath));
+			doc.getDocumentElement().normalize();
+
+			String mandatoryTags[] = {"usage_percentage", "poisson_interarrival", "active_period",
+					"idle_period", "dag_layers", "dag_services"};
+
+			NodeList streamList = doc.getElementsByTagName("stream");
+			int numOfStreams = streamList.getLength();
+			String[] names = new String[numOfStreams];
+			double[] usage = new double[numOfStreams];
+			double[] interarrival = new double[numOfStreams];
+			double[] active = new double[numOfStreams];
+			double[] idle = new double[numOfStreams];
+			double[] timeout = new double[numOfStreams];
+			int[][][] nodeApplications = new int[numOfStreams][][];
+
+			for (int i = 0; i < numOfStreams; i++) {
+				Element streamElement = (Element) streamList.item(i);
+				isAttributePresent(streamElement, "name");
+				String streamName = streamElement.getAttribute("name");
+
+				// A stream shares its log file naming (<name>_GENERIC.log) with applications
+				if(findApplicationIndex(streamName) >= 0)
+					throw new IllegalArgumentException("Stream '" + streamName + "' has the same name as an application");
+				for (int p = 0; p < i; p++) {
+					if(names[p].equals(streamName))
+						throw new IllegalArgumentException("Stream name '" + streamName + "' is defined more than once");
+				}
+				names[i] = streamName;
+
+				for (String tag : mandatoryTags) {
+					isElementPresent(streamElement, tag);
+				}
+
+				usage[i] = Double.parseDouble(getChildText(streamElement, "usage_percentage"));
+				interarrival[i] = Double.parseDouble(getChildText(streamElement, "poisson_interarrival"));
+				active[i] = Double.parseDouble(getChildText(streamElement, "active_period"));
+				idle[i] = Double.parseDouble(getChildText(streamElement, "idle_period"));
+				timeout[i] = 0;
+				if(checkElement(streamElement, "task_timeout"))
+					timeout[i] = Double.parseDouble(getChildText(streamElement, "task_timeout"));
+
+				if(usage[i] < 0 || usage[i] > 100)
+					throw new IllegalArgumentException("Stream '" + streamName + "': usage_percentage must be in [0, 100], got " + usage[i]);
+				if(interarrival[i] <= 0)
+					throw new IllegalArgumentException("Stream '" + streamName + "': poisson_interarrival must be positive, got " + interarrival[i]);
+				if(active[i] <= 0)
+					throw new IllegalArgumentException("Stream '" + streamName + "': active_period must be positive, got " + active[i]);
+				if(idle[i] < 0)
+					throw new IllegalArgumentException("Stream '" + streamName + "': idle_period must not be negative, got " + idle[i]);
+
+				String[] layerTokens = getChildText(streamElement, "dag_layers").split(",");
+				int[] layerSizes = new int[layerTokens.length];
+				for (int l = 0; l < layerTokens.length; l++) {
+					layerSizes[l] = Integer.parseInt(layerTokens[l].trim());
+					if(layerSizes[l] < 1)
+						throw new IllegalArgumentException("Stream '" + streamName + "': dag_layers values must be at least 1, got " + layerSizes[l]);
+				}
+
+				nodeApplications[i] = parseStreamDagServices(streamName, getChildText(streamElement, "dag_services"), layerSizes);
+			}
+
+			streamNames = names;
+			streamUsagePercentage = usage;
+			streamPoissonInterarrival = interarrival;
+			streamActivePeriod = active;
+			streamIdlePeriod = idle;
+			streamTimeout = timeout;
+			streamNodeApplications = nodeApplications;
+		} catch (Exception e) {
+			SimLogger.printLine("Streams XML cannot be parsed! Terminating simulation...");
+			e.printStackTrace();
+			System.exit(1);
+		}
+	}
+
+	private String getChildText(Element element, String key) {
+		return element.getElementsByTagName(key).item(0).getTextContent().trim();
+	}
+
+	/** Index of the application with this name in applications.xml, or -1 if there is none. */
+	private int findApplicationIndex(String applicationName) {
+		for (int i = 0; i < taskNames.length; i++) {
+			if(taskNames[i].equals(applicationName))
+				return i;
+		}
+		return -1;
+	}
+
+	/**
+	 * Parses a streams.xml dag_services tag into the applications.xml index of every node,
+	 * per layer (same layer order/sizes as dag_layers) - e.g. "A, (B, C), D" for a 1,2,1
+	 * stream becomes {{A}, {B, C}, {D}}. Same grammar as dag_partition_weights: a layer with
+	 * exactly one node may be a bare name, a layer with 2+ nodes must be parenthesized. The
+	 * same application may appear more than once (e.g. "(A, A)" runs it twice in parallel).
+	 */
+	private int[][] parseStreamDagServices(String streamName, String text, int[] layerSizes) {
+		List<String> tokens = splitTopLevelCommaList(text);
+
+		if (tokens.size() != layerSizes.length) {
+			throw new IllegalArgumentException("Stream '" + streamName + "': dag_services has "
+					+ tokens.size() + " layer entries but dag_layers defines " + layerSizes.length + " layers");
+		}
+
+		int[][] nodeApplications = new int[layerSizes.length][];
+		for (int l = 0; l < tokens.size(); l++) {
+			String token = tokens.get(l);
+			String[] nameTokens = (token.startsWith("(") && token.endsWith(")"))
+					? token.substring(1, token.length() - 1).split(",")
+					: new String[] { token };
+
+			if (nameTokens.length != layerSizes[l]) {
+				throw new IllegalArgumentException("Stream '" + streamName + "': dag_services layer " + l
+						+ " has " + nameTokens.length + " application(s) but dag_layers defines " + layerSizes[l]
+						+ " node(s) for that layer");
+			}
+
+			nodeApplications[l] = new int[nameTokens.length];
+			for (int n = 0; n < nameTokens.length; n++) {
+				String applicationName = nameTokens[n].trim();
+				int applicationIndex = findApplicationIndex(applicationName);
+				if (applicationIndex < 0) {
+					throw new IllegalArgumentException("Stream '" + streamName + "': dag_services layer " + l
+							+ " refers to unknown application '" + applicationName + "'");
+				}
+				nodeApplications[l][n] = applicationIndex;
+			}
+		}
+
+		return nodeApplications;
 	}
 
 	private void parseEdgeDevicesXML(String filePath)
