@@ -33,6 +33,12 @@ CloudSim) extended with:
   `poisson_interarrival`/`task_timeout`; the applications it runs ignore theirs while they are
   its nodes. An application can still be requested on its own, and can itself be a DAG of
   sub-tasks. See §6.11.
+- **Service-aware UAV mobility & world events** (tutorial19+): three more centralized UAV
+  policies (`SERVICE_KMEANS`, `SERVICE_APF`, `SERVICE_CAPACITY_FILL`, the service-aware
+  counterparts of `PRIORITY_KMEANS`/`APF`/`CAPACITY_FILL`) move every UAV towards the requests
+  for the services IT hosts instead of towards users in general, and **world events** listed one by one in an `events.xml`
+  (`events/WorldEvent`: a place, a time window and a request) make crowds gather and request one
+  thing, so such requests - and the UAVs that serve them - move across the map. See §6.12.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -94,6 +100,9 @@ flowchart TB
 | `mobility/uav/UAVMobilityModel` (abstract `SimEntity`) | Base for **edge-server (UAV) movement**. Event-driven (`SimSettings.EDGE_SERVER_MOVE` tag) rather than pure `getLocation()` lookup — moves are scheduled and applied to `UAV.setPlace()`. |
 | `mobility/uav/DefaultUAVMobility` | No-op implementation — makes edge servers static. Returned by `ScenarioFactory.getEdgeMobilityModel()`'s default method, so it's what every pre-UAV tutorial (1–5) effectively gets. |
 | `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` first checks `isVoronoiPolicy(uavMobilityOption)` (true for `"VORONOI"` or any `"VORONOI_<factor>"` variant - see §6.2/§6.5) and otherwise falls through to a `switch`: `NO`, `RANDOM`, `LOCAL` (chase centroid of *active* users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). The VORONOI branch: each UAV partitions only *active* users within its own `SERVICE_RADIUS` by nearest-UAV, considering only competing UAVs close enough to possibly be nearer (bounded by `2 * SERVICE_RADIUS`, via the triangle inequality - see `VoronoiPartitioner.recalculate`), then chases its own cell's centroid, weighted by each user's `MobilityModel.getPriority(...)` so e.g. SAR members can pull the centroid harder than normal users without affecting the nearest-UAV partition itself. A device outside every UAV's `SERVICE_RADIUS` is left unclaimed (nobody's cell) rather than handed to whichever UAV is globally nearest - every decentralized policy's decision is provably a function of purely local information only, never full-scenario state. All of `LOCAL`/`LOCAL_FORCE`/VORONOI/`ASSIGNED_LOCAL` skip devices where `MobilityModel.isActive(deviceId, time)` is false, so a staged population (e.g. SAR members before `sar_entry_time`) can't trap/skew a UAV. Caches `allUavs` once in `startEntity()`. Only tutorial8 sweeps `LOCAL_FORCE`/`VORONOI` (`NO`/`RANDOM` too, plus `VORONOI_2`/`VORONOI_4` in tutorial9); `LOCAL`/`ASSIGNED_LOCAL` remain available in the shared switch (tutorial6/7 still use them) but were dropped from tutorial8/9's `uav_mobility_options`/plotting config. |
+| `mobility/uav/CentralizedUAVMobility` | The centralized UAV controller (tutorial12+): one `SimEntity` that, every `centralized_controller_interval` seconds, picks a target per UAV with the configured policy (`PRIORITY_KMEANS`, `APF`, `CAPACITY_FILL`, `ADAPTIVE_KMEANS`, and from tutorial19 the service-aware `SERVICE_KMEANS`/`SERVICE_APF`/`SERVICE_CAPACITY_FILL`; `isSupportedPolicy()` lists them for `MainApp` validation) and moves it towards it at its max speed. The service-aware cases delegate to `ServiceAwareUavPolicies` (`runServiceAwarePolicy`), feeding it the demand from a `ServiceDemandTracker` and which UAV hosts which service (`uavHostsService[][]`, from `UAV.canServeTaskType`). See §6.12. |
+| `mobility/uav/ServiceDemandTracker` | (tutorial19+) A sorted index of the pre-generated `LoadGeneratorModel.getTaskList()`: `snapshot(now, window, lookahead, mobilityModel)` returns the demand a service-aware policy reacts to - one entry per request made in `[now - service_demand_window, now + service_demand_lookahead]`, positioned at its device's position NOW and weighted by `MobilityModel.getPriority`, tagged with the service slot it needs (a stream request yields one entry per node service). |
+| `mobility/uav/ServiceAwareUavPolicies` | (tutorial19+) The three target-selection algorithms (`serviceKMeans`, `serviceApf`, `serviceCapacityFill`), pure functions of (UAV positions, who hosts what, demand) returning a target per UAV (`null` = hold). See §6.12. |
 | Application-level mobility models (not in `mobility/`, live under `applications/tutorialN/`) | e.g. `tutorial6.ConvergingMobilityModel` (crowd converges onto 3 hardcoded meeting areas, `ROUND_ROBIN`/`CLOSEST` assignment), `tutorial8.SARTeamMobilityModel` (fixed teams, staged entry, MOVE/STOP cycling, formation offsets), `tutorial8.CombinedMobilityModel` (delegates a `deviceId` range to one sub-model each — the pattern to copy for any "second population"). |
 
 
@@ -102,8 +111,14 @@ flowchart TB
 |---|---|
 | `LoadGeneratorModel` (abstract) | Pre-computes the **entire** task timeline before the sim starts (`initializeModel()` → `taskList: List<TaskProperty>`), plus `getTaskTypeOfDevice(deviceId)`. |
 | `IdleActiveLoadGenerator` | Default: assigns each device one task type (weighted by `usage_percentage`), alternates active (Poisson task arrivals) / idle periods per `applications.xml`. |
-| `task_generator/IdleActiveStreamLoadGenerator` | (tutorial18+) `IdleActiveLoadGenerator` for scenarios that also define **streams** (§6.11): every device is assigned ONE request type - an application or a stream - by drawing from the applications' and the streams' `usage_percentage` together (they must add up to 100, else the sim exits with a clear message), then alternates active/idle using THAT type's own `poisson_interarrival`/`active_period`/`idle_period`. A stream request is a `utils/StreamTaskProperty` carrying one pre-sampled `TaskProperty` per node (sampled exactly like a standalone request of the node's app, so an app that is only a stream node - `usage_percentage` 0 - still gets its size/length distributions). With no streams defined it behaves like `IdleActiveLoadGenerator`. |
+| `task_generator/IdleActiveStreamLoadGenerator` | (tutorial18+) `IdleActiveLoadGenerator` for scenarios that also define **streams** (§6.11): every device is assigned ONE request type - an application or a stream - by drawing from the applications' and the streams' `usage_percentage` together (they must add up to 100, else the sim exits with a clear message), then alternates active/idle using THAT type's own `poisson_interarrival`/`active_period`/`idle_period`. A stream request is a `utils/StreamTaskProperty` carrying one pre-sampled `TaskProperty` per node (sampled exactly like a standalone request of the node's app, so an app that is only a stream node - `usage_percentage` 0 - still gets its size/length distributions). With no streams defined it behaves like `IdleActiveLoadGenerator`. Its steps are `protected` hooks (`getSampledApplications`, `createDistributions`, `createStreamRequest`, the `expRngList` field) so a subclass can reuse the request sampling: tutorial19's `EventLoadGenerator` builds event-driven request lists with them (§6.12). |
 | `applications/tutorial8/SARAwareLoadGenerator` | Pattern for **population-aware** generation: splits `applications.xml` app indices into disjoint subsets per population (normal vs SAR), normalizes `usage_percentage` independently within each subset, and delays SAR task generation until `sar_entry_time`. Copy this pattern for any new device population with its own app catalogue. |
+
+### `events/` — world events (tutorial19+)
+| Class | Role |
+|---|---|
+| `events/WorldEvent` | Immutable description of a **world event** - something that happens at a place for a while and makes the people around it request one thing: `name`, `start`/`end` (simulation seconds), a center (`x`,`y`), `radius` (users request only while within it), `attractionRadius` (users within it when the event starts may be drawn to it), `participation` (probability of such a user being drawn), and the request - an application or stream NAME (resolved to a task type with `SimSettings.getTaskTypeByName`) and its `requestInterarrival` (mean seconds between one user's requests while inside). Validates its arguments (unknown request name, `end <= start`, radii, ...) with a clear message; `toLogLine(index)` is the `EVENTS.log` row. Events are plain data: the scenario's `events.xml` (read by `WorldEventLoader`) decides which exist, and its mobility model and load generator act on them - see §6.12. |
+| `events/WorldEventLoader` | (tutorial19+) `load(path)` reads an `events.xml` - one `<event name="...">` per event that will happen, each with `start_time`, `end_time`, `x_pos`, `y_pos`, `radius`, `request`, `poisson_interarrival` and the optional `attraction_radius` (default: `radius`) and `participation` (default 1) - into `WorldEvent`s, in file order. Nothing about the events is random. Strict on purpose: a missing/unknown/repeated tag, a non-number, an unknown request name, a repeated or empty event name, a center outside the `*_bound` area or an empty file throws an `IllegalArgumentException` naming the event (`MainApp` prints it and stops), so a typo cannot silently change an experiment. Must run after `SimSettings.initialize` (requests are resolved against `applications.xml`/`streams.xml`). |
 
 ### `network/` — delay modeling
 | Class | Role |
@@ -149,7 +164,7 @@ flowchart TB
 | `Location` | `(xPos, yPos, servingWlanId, placeTypeIndex)`. |
 | `TaskProperty` | Immutable descriptor produced by a `LoadGeneratorModel` for one task instance: timing, size, `taskType`, `mobileDeviceId`, `partitionable`/`partitionCount` (looked up from `SimSettings` at construction time). |
 | `StreamTaskProperty` (extends `TaskProperty`) | (tutorial18+) One request of a **stream** (§6.11): `getStreamIndex()` + `getNodeLayers()` (one pre-sampled `TaskProperty` per node, per layer, in dependency order). Its own `taskType` is the stream's task type (`SimSettings.getStreamTaskType`) - streams are numbered right after the applications - and its length/upload/download are only informational sums over its nodes. `DefaultMobileDeviceManager.submitTask` dispatches on `instanceof StreamTaskProperty`. |
-| `SimLogger` | Singleton; buffers per-task and per-VM/location logs, writes `.log`/`.csv` files at `simStopped()`; also the destination for `addUavLocationLog(time, uavId, x, y)` → `<prefix>_UAV_LOCATIONS.log`. |
+| `SimLogger` | Singleton; buffers per-task and per-VM/location logs, writes `.log`/`.csv` files at `simStopped()`; also the destination for `addUavLocationLog(time, uavId, x, y)` → `<prefix>_UAV_LOCATIONS.log`. Scenarios with world events (tutorial19+) also call `addEventLog(line)` (one `WorldEvent.toLogLine` per event, before the run) → `<prefix>_EVENTS.log` (`index;name;start;end;x;y;radius;attractionRadius;request;services`; written only when at least one event was added, so scenarios without events produce no such file) - the heat-map video of tutorial19 draws the events from it. |
 | `SimUtils` | RNG (`RNG` field), `getRandomNumber`, `getEuclideanDistance`, time-diff formatting. |
 | `PoissonDistr` | Poisson sampling helper used by load generators. |
 
@@ -169,6 +184,7 @@ flowchart TB
 | `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`). It sweeps the number of users (`min`/`max_number_of_mobile_devices`) and, like tutorial15's `task_partition_policies`, a list of **VM utilization policies**: `vm_utilization_policies=UTILIZATION_10,UTILIZATION_30,UTILIZATION_50,...` in `default_config.properties` — each entry is a policy name `UTILIZATION_<percent>` (decimals allowed) whose value `MainApp` writes into every app's `vm_utilization_on_edge` for that run via `SimSettings.setEdgeVmUtilization()` (applications.xml's own value is only a placeholder), so several utilizations land in the same plot as separate lines (same "numeric parameter encoded in the policy name" convention as `PARTITION_<N>`, §6.2 point 8). A missing list or an entry that isn't `UTILIZATION_<percent>` aborts the run up front. Results go to `sim_results/tutorial16/ite<N>/SIMRESULT_<scenario>_<orchestrator>_UTILIZATION_<percent>_<users>DEVICES_*`. No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. With the default 1 task per user per 100 s and mean 1 s service the offered load is users/100; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. `python/` is tutorial15's plotting folder copied as-is (`plot.sh` + `plotAvg*.py`), adapted only so the scenarios/legends come from `vm_utilization_policies` (legend "30% Utilization"; x axis is the number of clients). |
 | `tutorial17` | Compares **service placement policies** (§6.10): which application services each UAV hosts is decided by a `ServicePlacementPolicy` swept via `service_placement_policies` in `default_config.properties` (currently `SINGLE,ALL`) instead of hard-coded per-host `service_capability` lists. `applications.xml` defines 4 otherwise-identical apps (`SERVICE_APP_0..3`, each `usage_percentage=25`), one per explicit `service_index` (0-3); `edge_devices.xml` (16 UAVs, tutorial10's 4-datacenter/4-host-each corner layout) declares no `service_capability` at all. `SINGLE` gives each UAV exactly one service (16 UAVs / 4 services = 4 UAVs per service, interleaved so every datacenter's UAVs host different services), `ALL` gives every UAV every service. `UAVEdgeOrchestrator`/`UAV.canServeTaskType()` enforce the result on every placement decision - a task whose service is hosted by no in-range, non-full UAV is rejected (`REJECTED_DUE_TO_VM_CAPACITY`). `MainApp` sweeps placement policy as the innermost loop (inside the UAV mobility option), `SIMRESULT_*` file names gain a `_<PLACEMENT>` segment after the mobility option, and the python plot lines are the placement policies (`config.py` holds the first `uav_mobility_options` entry fixed, and warns if more are listed). Users move with a plain, non-converging random walk (tutorial6's `SampleMobilityModel`, reused directly - no `ConvergingMobilityModel`/meeting zone), while `uav_mobility_options` sweeps every real `CentralizedUAVMobility` policy EXCEPT `NO`/`RANDOM`: `PRIORITY_KMEANS,APF,CAPACITY_FILL,ADAPTIVE_KMEANS` (see §6.2). No SAR, no partitioning - uses the core `IdleActiveLoadGenerator` directly, same non-SAR structure as tutorial16. |
 | `tutorial18` | tutorial17's service-placement scenario (same random-walk users, 16-UAV `edge_devices.xml`, `SINGLE,ALL` placement sweep, centralized UAV mobility) plus **streams** (§6.11). Takes a 6th `MainApp` argument, `streams.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 4th `;` field). `applications.xml`: `SERVICE_APP_0` (plain, `usage_percentage` 20, with its own `task_timeout` that only applies standalone), `SERVICE_APP_1` (`usage_percentage` 20 and itself a `dag_layers=1,2,1` DAG of sub-tasks, so it runs as that DAG both alone and as a stream node), `SERVICE_APP_2`/`SERVICE_APP_3` (`usage_percentage` 0 - stream nodes only). `streams.xml`: `SURVEILLANCE_STREAM` (30%, `1,2,1`: `SERVICE_APP_0, (SERVICE_APP_1, SERVICE_APP_2), SERVICE_APP_3`, own 20 s timeout, 60 s active / 30 s idle) and `MONITORING_STREAM` (30%, `1,1`, no timeout, always active); applications' 40% + streams' 60% = 100. Uses `IdleActiveStreamLoadGenerator`. Statistics gain one `<STREAM_NAME>_GENERIC.log` per stream next to the per-app ones (only apps/streams with `usage_percentage` > 0 get a file, so the stream-only `SERVICE_APP_2/3` have none), `ALL_APPS_GENERIC.log` aggregates ONLY the applications requested on their own and `ALL_STREAMS_GENERIC.log` only the streams (§6.11 point 4). `python/` is tutorial17's plotting folder made group-aware: every plot is produced twice, into `<output>/applications/` (the overall `ALL_APPS` plot + one per standalone application) and `<output>/streams/` (overall `ALL_STREAMS` + one per stream) - see `config.get_plot_groups()`; applications that are only stream nodes get no application plots, and a stream's nodes never count in the application plots. |
+| `tutorial19` | **Service-aware UAV mobility under world events** (§6.12): compares the service-blind `PRIORITY_KMEANS` baseline with `SERVICE_KMEANS`, `SERVICE_APF` and `SERVICE_CAPACITY_FILL` (`uav_mobility_options`; `service_placement_policies=SINGLE` - each of the 16 UAVs hosts ONE of 4 services, so where a UAV is matters). Built from tutorial18 (`streams.xml`, `IdleActiveStreamLoadGenerator` base) with a 7th `MainApp` argument, `events.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 5th `;` field; `plot.sh` copies it to the results). Users do not request in their own time: `event_requests_only=true` makes them request ONLY while inside the radius of an active **world event**, and only that event's request; `event_gather=true` makes the crowd walk to the events. `events.xml` lists 7 events, one `<event>` each (radius 100 m, attraction radius 450 m, participation 50%, 200-1800 s, overlapping in time, far apart, each asking for a different set of services: `CONCERT`→`VIDEO_APP`, `WILDFIRE`→`FIRE_STREAM`, `ACCIDENT`→`TRAFFIC_STREAM`, `MATCH`→`BROADCAST_STREAM`, `FLOOD`→`DETECT_APP`, `PARADE`→`MAP_APP`, `STORM`→`RESCUE_STREAM`). `EventMobilityModel` (users) and `EventLoadGenerator` (requests) implement the events; `applications.xml` has 4 identical-workload applications, one per service; `streams.xml` has 4 streams (`RESCUE_STREAM` `1,2,1`, `FIRE_STREAM` `1,2`, `TRAFFIC_STREAM` `1,1`, `BROADCAST_STREAM` `2`) needing 2-4 services at once. Their `usage_percentage` etc. only matter when `event_requests_only=false` (they are then the users' normal pattern, adding up to 100, and the events' requests come on top). Writes `_EVENTS.log`. `python/` is tutorial18's group-aware plotting folder with one line per MOBILITY policy (instead of per placement policy), `plotTaskFailureReason.py` enabled (VM capacity - which also counts "no in-range UAV hosts the service" - and bandwidth) and `plotUserLocationHeatmapVideo.py` rewritten: it draws the events from `EVENTS.log` (solid circle = request radius, dashed = attraction radius, label with the request and the number of users inside) and colors every UAV by the service it hosts. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -177,7 +193,7 @@ new experiment rather than editing core classes in place.
 
 ## 5. Config files reference
 
-Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial18 on: see `streams.xml` below), all parsed by `SimSettings.initialize(...)`:
+Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial18 on: see `streams.xml` below; five in tutorial19: see `events.xml`), all parsed by `SimSettings.initialize(...)`:
 
 - **`default_config.properties`** — flat key=value. Comma-separated values become sweep
   axes in `MainApp` (e.g. `orchestrator_policies`, `simulation_scenarios`,
@@ -186,7 +202,15 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
   `service_placement_policies` [tutorial17 - `SINGLE`/`ALL`, see §6.10; defaults to `ALL`]). New scalar
   knobs (like tutorial8's `sar_*` keys) should default to a harmless value (0/empty) so
   older tutorials that don't set them are unaffected — see `SimSettings` SAR fields for
-  the pattern.
+  the pattern. World-event / service-aware-mobility knobs (tutorial19+, all default to a
+  value that changes nothing - see §6.12): `event_requests_only` (default `false`: users
+  request ONLY inside an event's radius, and only its request), `event_gather` (default
+  `false`: users within an event's attraction radius may walk to it), `event_gather_speed`
+  (m/s, default 5), `service_demand_window` (seconds of past requests the service-aware UAV
+  policies react to, default 60) and `service_demand_lookahead` (seconds of FUTURE requests they
+  may also see - an oracle, default 0). The knobs only take effect in a scenario whose
+  mobility model / load generator implements them (tutorial19's `EventMobilityModel` /
+  `EventLoadGenerator`); `uav_mobility_options` may name the service-aware policies.
 - **`applications.xml`** — one `<application name="...">` per task type, parsed into
   `SimSettings.getTaskLookUpTable()` (a `double[appIndex][columnIndex]` table). Columns
   (mandatory): `usage_percentage`, `prob_cloud_selection`, `poisson_interarrival`,
@@ -225,6 +249,14 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
   streams AND applications (it names the `<name>_GENERIC.log` file). Parse errors (unknown
   application, layer/node count mismatch, ...) terminate the simulation with a message.
   See §6.11.
+- **`events.xml`** (tutorial19+; NOT parsed by `SimSettings` - the scenario's `MainApp` passes it
+  to `events/WorldEventLoader` after `SimSettings.initialize`) - one `<event name="...">` per world
+  event that will happen, listed explicitly: mandatory `start_time`, `end_time` (simulation
+  seconds), `x_pos`, `y_pos`, `radius` (m; users inside request while it is active), `request` (an
+  application or stream NAME) and `poisson_interarrival` (mean seconds between one user's requests
+  inside); optional `attraction_radius` (m, at least `radius`, default `radius`: users within it
+  when the event starts may walk to it with `event_gather`) and `participation` ([0,1], default 1:
+  the share of those users that go). See §6.12.
 
 ## 6. Cookbook — "How do I add a new ___?"
 
@@ -266,6 +298,8 @@ abstract base classes.
 6. If the policy averages/partitions user positions, skip devices where
    `MobilityModel.isActive(deviceId, time)` is false (see §6.5) so a staged
    subpopulation can't be mistaken for real, present users.
+   A CENTRALIZED policy that must know WHICH service is wanted where (not just where the
+   users are) should instead take its demand from `ServiceDemandTracker` - see §6.12.
 7. `scripts/tutorial8/python/plotGenericLine.py`'s `plot_generic_line` saves figures as
    `<metric_name>_<app_type>.pdf` (pass a short PascalCase `metric_name`, e.g.
    `'FailedTask'`) rather than `<row_offset>_<column_offset>_<app_type>.pdf` — always pass
@@ -713,8 +747,94 @@ may be requested by itself (devices assigned to it) and/or be a node of a stream
    argument and calls the 4-argument `initialize`; the factory returns
    `IdleActiveStreamLoadGenerator`) and `scripts/tutorial18`.
 
+### 6.12 Service-aware UAV mobility & world events (tutorial19 pattern)
+Goal: UAVs move to where the services THEY host are requested, and the requests are made to
+move, so the difference shows. Two independent pieces:
+
+1. **Service-aware policies** (`CentralizedUAVMobility` cases `SERVICE_KMEANS`, `SERVICE_APF`,
+   `SERVICE_CAPACITY_FILL`, algorithms in `ServiceAwareUavPolicies`). All three work on the
+   **demand** of `ServiceDemandTracker.snapshot(...)`: one entry per request made during the last
+   `service_demand_window` seconds (plus the next `service_demand_lookahead` seconds, an oracle -
+   0 by default, so policies only react to what already happened), located where its device is
+   NOW, weighted by `MobilityModel.getPriority`, and tagged with the service it needs (a stream
+   request gives one entry per node service). A demand entry only counts for UAVs that host its
+   service (`UAV.canServeTaskType`) - that is the one difference to the service-blind
+   counterparts; with every UAV hosting every service they behave alike (use `SINGLE`
+   placement to compare them). A UAV nothing pulls holds its position; with no demand at all
+   nobody moves.
+   - `SERVICE_KMEANS`: Lloyd's algorithm of `PRIORITY_KMEANS`, but a demand entry joins the
+     nearest center of a UAV hosting its service. Converges fast; the UAVs of a service all go to
+     that service's densest demand, so it ignores capacity and a hot spot gets about ONE UAV per
+     service (great at low load, overloaded at high load).
+   - `SERVICE_APF`: attraction only from demand the UAV can serve, repulsion between UAVs scaled by
+     the overlap (Jaccard) of what they host, so UAVs hosting different services stack where a
+     stream needs several at once. Like `APF` it reacts slowly to far demand (force ~ 1/d^2) and
+     overlapping events pull a UAV in between.
+   - `SERVICE_CAPACITY_FILL`: `CAPACITY_FILL`'s grid and per-UAV capacity, per (cell, service):
+     the highest-demand pairs get the nearest unassigned UAV hosting the service, more UAVs while
+     the demand is uncovered. Spreads several UAVs of a service over a crowd - the most robust.
+2. **World events** (`events/WorldEvent`, listed in the scenario's `events.xml` and read by `WorldEventLoader`;
+   `EventMobilityModel`, `EventLoadGenerator`). With `event_gather=true`, every event is considered ONCE per user,
+   at the first mobility step of its window at which the user is free (not on its way to / at
+   another event): a user within the event's `attractionRadius` then goes with probability
+   `participation` - it walks to a point within 70% of the radius at `event_gather_speed`, stays
+   within 90% of it while the event lasts and walks home when it ends.
+   With `event_requests_only=true`, `EventLoadGenerator` skips the normal idle/active generation
+   (and the 100% `usage_percentage` check) and instead draws, per event and device, Poisson
+   arrivals (mean `requestInterarrival`) from `start` to `end`, keeping a request only if the
+   device's position at that time is inside the event's `radius`; the request is the event's
+   application/stream (a stream is built by `IdleActiveStreamLoadGenerator.createStreamRequest`),
+   and no other request is ever made. Because the whole task list is generated before the run,
+   `SimManager` now initializes the mobility model BEFORE the load generator (so a generator can
+   look up where a device is - see §7).
+3. **Logging / plotting**: `SimLogger.addEventLog` -> `<prefix>_EVENTS.log`; tutorial19's
+   `plotUserLocationHeatmapVideo.py` draws the active events and colors UAVs by hosted service.
+   The statistics are the tutorial18 ones: applications and streams each get their own plot folder.
+4. **Typical result** (tutorial19 defaults, 10 iterations, failed requests): the baseline
+   `PRIORITY_KMEANS` fails ~60-90% of the applications and ~95-99% of the streams; the
+   service-aware policies are far better - `SERVICE_KMEANS` best at 100 users (~5%) but ~70% /
+   ~50% at 800, `SERVICE_CAPACITY_FILL` ~12-28% / ~30%, `SERVICE_APF` ~10-35% for applications but
+   ~60% for streams (slow to bring ALL the services of a stream to the same place).
+5. **New scenario**: copy `applications/tutorial19` and `scripts/tutorial19`, edit
+   `events.xml` (add, remove or edit `<event>` entries: positions, windows, request names - any
+   mistake fails with a message naming the event) and `applications.xml`/`streams.xml`. Make sure the events lie inside the
+   `*_bound` area, that every requested application/stream has `usage_percentage` > 0 (else it
+   gets no `_GENERIC.log` and no plot), and that `service_placement_policies` is `SINGLE` (or
+   another placement where UAVs host different services).
+6. **Not modelled (extension points)**: events are exactly the ones listed in `events.xml` (a random
+   generator - e.g. exponential interarrival times - would only need to return a `List<WorldEvent>`
+   in place of `WorldEventLoader.load`); events are circles with a uniform
+   participation probability; a user is drawn to at most one event at a time, and an event is only ever considered once per user (it
+   is not reconsidered if the user was outside its attraction radius then);
+   only the centralized controller is service-aware (no decentralized variant).
+
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
+- **`SimManager` initializes the mobility model BEFORE the load generator** (it used to be
+  the other way round; since tutorial19). A load generator may therefore ask
+  `getMobilityModel()` where a device is while it builds the task list (tutorial19's
+  `EventLoadGenerator` does); the mobility model must not need the task list in
+  `initialize()`. No existing mobility model did. (Results of older tutorials only differ by
+  the random-number draw order - statistically identical, checked on tutorials 14/15/17/18.)
+- **The service-aware UAV policies only differ from the blind ones when UAVs host DIFFERENT
+  services** (`SINGLE` placement). Under `ALL` they are, by design, the same policies counting
+  requests instead of devices. Their effect also depends on where requests come from: with
+  uniformly spread users (no events) service-aware UAVs have nothing to react to.
+- **`EVENTS.log` is only written when events were added with `SimLogger.addEventLog`**
+  (tutorial19+); scenarios without events produce no such file.
+- **A stream layer starts its nodes in order, and stops at the first one no UAV can take.**
+  `releaseStreamLayer` already knows at release time which nodes of the layer found no UAV, but
+  `startStreamLayer` still starts the nodes ahead of the failing one (uploading and running them
+  for nothing, since the stream is then failed) and not the ones behind it - exactly what a
+  DAG application's sub-task layer does (`submitChildTaskBatch`), which streams mirror on
+  purpose. Failing the stream at release instead was measured on tutorials 18/19 (400 users, 10
+  iterations): failure rates move by at most ~1-2 points (the baseline's streams by ~5), the
+  ranking of the policies does not change - so it has not been changed.
+- **Timeouts have no column in `GENERIC.log`.** A TIMED_OUT stream/application counts in
+  `failed` (column 2) but in none of the failure-reason columns (bandwidth, VM capacity,
+  mobility, WLAN range); `failed - (those four)` is the number of timeouts. The
+  failure-reason plots (`percentage_of_failed`) therefore only add up to 100% when nothing times
+  out - true for tutorial 19, whose admission check keeps queues short at every swept load.
 - **Stream node placement is only as good as the service availability around the device.**
   With `SINGLE` placement a stream needing several different services at once almost never
   finds all of them within `UAV.SERVICE_RADIUS` of the device - expect near-0% completion for
