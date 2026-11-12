@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<streams>
+	<!-- ONAT: tutorial19's streams are what the bigger world events ask for - each needs SEVERAL
+	     services, one per node of its DAG (see tutorial18's streams.xml for the file format):
+	       RESCUE_STREAM     DETECT -> (MAP, VIDEO) -> ALERT : all 4 services, in 3 layers
+	       FIRE_STREAM       DETECT -> (MAP, ALERT)          : 3 services, in 2 layers
+	       TRAFFIC_STREAM    MAP -> ALERT                    : 2 services, in 2 layers
+	       BROADCAST_STREAM  (VIDEO, ALERT)                  : 2 services at once, 1 layer
+	     A node only runs on an in-range UAV hosting its service, and the stream fails as a whole if
+	     any node finds none - so a crowd asking for a stream is only served if UAVs of ALL its
+	     services are within reach of it at once, which is exactly what service-aware mobility is
+	     supposed to arrange (and a service-blind policy only achieves by chance).
+	     The timing values (usage_percentage ... idle_period) are the users' NORMAL request pattern
+	     and only matter when event_requests_only is false in default_config.properties (they add
+	     up to 100 together with the applications'). task_timeout is the stream's own timeout. -->
+	<stream name="RESCUE_STREAM">
+		<usage_percentage>10</usage_percentage>
+		<poisson_interarrival>120</poisson_interarrival>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<task_timeout>30</task_timeout>
+		<dag_layers>1,2,1</dag_layers>
+		<dag_services>DETECT_APP, (MAP_APP, VIDEO_APP), ALERT_APP</dag_services>
+	</stream>
+	<stream name="FIRE_STREAM">
+		<usage_percentage>10</usage_percentage>
+		<poisson_interarrival>120</poisson_interarrival>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<task_timeout>30</task_timeout>
+		<dag_layers>1,2</dag_layers>
+		<dag_services>DETECT_APP, (MAP_APP, ALERT_APP)</dag_services>
+	</stream>
+	<stream name="TRAFFIC_STREAM">
+		<usage_percentage>10</usage_percentage>
+		<poisson_interarrival>120</poisson_interarrival>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<task_timeout>30</task_timeout>
+		<dag_layers>1,1</dag_layers>
+		<dag_services>MAP_APP, ALERT_APP</dag_services>
+	</stream>
+	<stream name="BROADCAST_STREAM">
+		<usage_percentage>10</usage_percentage>
+		<poisson_interarrival>120</poisson_interarrival>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<task_timeout>30</task_timeout>
+		<dag_layers>2</dag_layers>
+		<dag_services>(VIDEO_APP, ALERT_APP)</dag_services>
+	</stream>
+</streams>
