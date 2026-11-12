@@ -165,6 +165,9 @@ public class SimLogger {
 	/** ONAT: List tracking UAV (edge server) positions over time, "time;uav_id;x;y" per entry */
 	private LinkedList<String> uavLocationList;
 
+	/** ONAT: List of the world events of the scenario, one WorldEvent.toLogLine() per entry - see addEventLog() */
+	private LinkedList<String> eventList;
+
 	/** Singleton instance ensuring consistent logging across simulation components */
 	private static SimLogger singleton = new SimLogger();
 	
@@ -467,6 +470,7 @@ public class SimLogger {
 		vmLoadList = new LinkedList<VmLoadLogItem>();
 		apDelayList = new LinkedList<ApDelayLogItem>();
 		uavLocationList = new LinkedList<String>();
+		eventList = new LinkedList<String>();
 		
 		numOfAppTypes = SimSettings.getInstance().getNumOfTaskTypes();
 		numOfStatSlots = numOfAppTypes + 3;
@@ -802,6 +806,20 @@ public class SimLogger {
 	}
 
 	/**
+	 * ONAT: Records one world event of the scenario (see events/WorldEvent) - written to the
+	 * _EVENTS.log file at the end of the simulation so the events can be drawn next to the
+	 * user and UAV positions (e.g. in the heat-map video). Call it once per event after
+	 * simStarted(); a scenario that never calls it gets no events file. Only records if file
+	 * logging is enabled.
+	 *
+	 * @param eventLogLine the event as one WorldEvent.toLogLine() line
+	 */
+	public void addEventLog(String eventLogLine) {
+		if(fileLogEnabled)
+			eventList.add(eventLogLine);
+	}
+
+	/**
 	 * Records access point network delay measurements over time.
 	 * 
 	 * <p>Logs upload and download delays for all access points to analyze
@@ -1028,6 +1046,16 @@ public class SimLogger {
 			// ONAT: write the UAV (edge server) positions recorded live during the simulation
 			for (String entry : uavLocationList)
 				appendToFile(uavLocationBW, entry);
+
+			// ONAT: write the world events (tutorial19) - only for scenarios that have any
+			if (!eventList.isEmpty()) {
+				File eventFile = new File(outputFolder, filePrefix + "_EVENTS.log");
+				try (BufferedWriter eventBW = new BufferedWriter(new FileWriter(eventFile, true))) {
+					appendToFile(eventBW, "#auto generated file!");
+					for (String entry : eventList)
+						appendToFile(eventBW, entry);
+				}
+			}
 
 			// write delay info to file for each access point
 			if(SimSettings.getInstance().getApDelayLogInterval() != 0) {
@@ -1286,6 +1314,7 @@ public class SimLogger {
 		taskMap.clear();
 		vmLoadList.clear();
 		apDelayList.clear();
+		eventList.clear();
 	}
 	
 	/**
