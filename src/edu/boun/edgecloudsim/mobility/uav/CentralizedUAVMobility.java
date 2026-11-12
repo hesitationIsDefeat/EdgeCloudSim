@@ -27,7 +27,8 @@ import static edu.boun.edgecloudsim.utils.SimUtils.RNG;
  * have no mobility logic of their own - they just carry out whatever alert (target
  * point) the controller most recently sent them; a UAV that receives no alert simply
  * stays where it is (see the NO policy). See {@link #runControlTick} for the supported
- * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL, ADAPTIVE_KMEANS).
+ * policies (NO, RANDOM, PRIORITY_KMEANS, APF, CAPACITY_FILL, ADAPTIVE_KMEANS, and the
+ * service-aware SERVICE_KMEANS, SERVICE_APF, SERVICE_CAPACITY_FILL - see {@link ServiceAwareUavPolicies}).
  * <p>
  * Like {@link BasicUAVMobility}'s {@code VORONOI_<factor>}, {@code PRIORITY_KMEANS}
  * supports an optional {@code PRIORITY_KMEANS_<factor>} naming convention (see
@@ -51,8 +52,8 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
 
     // ONAT: PRIORITY_KMEANS tuning - Lloyd's-algorithm iteration cap and early-stop
     // threshold (stop once no cluster center moves more than this many meters).
-    private static final int KMEANS_MAX_ITERATIONS = 20;
-    private static final double KMEANS_CONVERGENCE_EPSILON = 1.0;
+    static final int KMEANS_MAX_ITERATIONS = 20;
+    static final double KMEANS_CONVERGENCE_EPSILON = 1.0;
 
     // ONAT: PRIORITY_KMEANS policy variants are named "PRIORITY_KMEANS" (uses the
     // configured sar_priority_factor) or "PRIORITY_KMEANS_<factor>" (e.g.
@@ -82,20 +83,44 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
         return factor == null ? null : Double.parseDouble(factor);
     }
 
+    // ONAT: service-aware policies (see ServiceAwareUavPolicies): the service-aware
+    // counterparts of PRIORITY_KMEANS, APF and CAPACITY_FILL - the users' pull on a UAV
+    // depends on which services the UAV hosts, so UAVs go where THEIR services are being
+    // requested. The demand they read is the requests of the last service_demand_window
+    // seconds (see ServiceDemandTracker), not the mere presence of users.
+    public static final String SERVICE_KMEANS = "SERVICE_KMEANS";
+    public static final String SERVICE_APF = "SERVICE_APF";
+    public static final String SERVICE_CAPACITY_FILL = "SERVICE_CAPACITY_FILL";
+
+    /** ONAT: every policy name this controller supports (PRIORITY_KMEANS also as PRIORITY_KMEANS_&lt;factor&gt;). */
+    public static final List<String> SUPPORTED_POLICIES = List.of("NO", "RANDOM", "PRIORITY_KMEANS", "APF",
+            "CAPACITY_FILL", "ADAPTIVE_KMEANS", SERVICE_KMEANS, SERVICE_APF, SERVICE_CAPACITY_FILL);
+
+    /** ONAT: true if the policy name is one this controller can run. */
+    public static boolean isSupportedPolicy(String policyName) {
+        return SUPPORTED_POLICIES.contains(policyName) || isPriorityKMeansPolicy(policyName);
+    }
+
+    /** ONAT: true for the service-aware policies, which need the request list and the UAVs' services. */
+    public static boolean isServiceAwarePolicy(String policyName) {
+        return SERVICE_KMEANS.equals(policyName) || SERVICE_APF.equals(policyName)
+                || SERVICE_CAPACITY_FILL.equals(policyName);
+    }
+
     // ONAT: APF tuning. ATTRACTION/REPULSION_GAIN are alpha/beta from the formula.
     // SOFTENING avoids the inverse-cube singularity when a user or UAV is (near-)
     // colocated with UAV j (a standard technique, e.g. Plummer softening in
     // gravitational N-body simulation): distance is measured as sqrt(||.||^2 +
     // SOFTENING^2) instead of the raw (possibly ~0) Euclidean distance, so force
     // magnitude stays bounded instead of exploding to +Infinity/NaN.
-    private static final double APF_ATTRACTION_GAIN = 50_000;
-    private static final double APF_REPULSION_GAIN = 20_000;
-    private static final double APF_SOFTENING_SQUARED = 10.0 * 10.0;
+    static final double APF_ATTRACTION_GAIN = 50_000;
+    static final double APF_REPULSION_GAIN = 20_000;
+    static final double APF_SOFTENING_SQUARED = 10.0 * 10.0;
     // ONAT: Net force below this magnitude is treated as a local-minimum "deadlock"
     // (attraction/repulsion cancel out) rather than a genuine direction to move in -
     // the controller nudges that UAV randomly instead, one tick-scale advantage a
     // decentralized/asynchronous APF swarm can't rely on (see class javadoc).
-    private static final double APF_DEADLOCK_FORCE_EPSILON = 1e-6;
+    static final double APF_DEADLOCK_FORCE_EPSILON = 1e-6;
 
     // ONAT: CAPACITY_FILL tuning. Grid discretizes the map into square cells of this size
     // (meters) for demand profiling. LOAD_FACTOR scales the per-tick per-UAV capacity
@@ -109,9 +134,9 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     // DISPERSION_GAIN is deliberately much smaller than APF_REPULSION_GAIN - it only
     // needs to keep multiple UAVs assigned to the same cell from colliding at the exact
     // same target point, not to spread them across the map.
-    private static final double CAPACITY_FILL_GRID_CELL_SIZE = 100.0;
-    private static final double CAPACITY_FILL_LOAD_FACTOR = 1.0;
-    private static final double CAPACITY_FILL_DISPERSION_GAIN = 5_000;
+    static final double CAPACITY_FILL_GRID_CELL_SIZE = 100.0;
+    static final double CAPACITY_FILL_LOAD_FACTOR = 1.0;
+    static final double CAPACITY_FILL_DISPERSION_GAIN = 5_000;
 
     // ONAT: ADAPTIVE_KMEANS tuning (see runAdaptiveKMeans). "Gathered" is detected by
     // watching the scatter-phase K-Means centers across ticks instead of coupling to any
@@ -139,6 +164,12 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
 
     private final String centralizedMobilityOption;
     private List<UAV> allUavs = List.of();
+
+    // ONAT: state of the service-aware policies, built on their first control tick (null for
+    // every other policy): the request index, and which services each UAV hosts
+    // (uavHostsService[uav][slot], slots as in ServiceDemandTracker.getServiceIndices()).
+    private ServiceDemandTracker serviceDemandTracker;
+    private boolean[][] uavHostsService;
 
     // ONAT: ADAPTIVE_KMEANS phase-tracking state - see runAdaptiveKMeans. All null/false
     // until this policy's first control tick; a fresh CentralizedUAVMobility instance is
@@ -226,8 +257,48 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
             case "APF" -> runCentralizedApf();
             case "CAPACITY_FILL" -> runCapacityAwareAllocation();
             case "ADAPTIVE_KMEANS" -> runAdaptiveKMeans();
+            case SERVICE_KMEANS, SERVICE_APF, SERVICE_CAPACITY_FILL -> runServiceAwarePolicy();
             default -> SimLogger.printLine(String.format(
                     "ONAT: Unsupported centralized UAV mobility option: %s", this.centralizedMobilityOption));
+        }
+    }
+
+    // ONAT: One control pass of a service-aware policy: read the demand (requests of the last
+    // service_demand_window seconds, plus the optional lookahead - see ServiceDemandTracker),
+    // let the policy pick a target per UAV (ServiceAwareUavPolicies) and alert the UAVs that
+    // got one. With no demand at all every UAV holds its position, like the other policies
+    // do when no user is active.
+    private void runServiceAwarePolicy() {
+        if (allUavs.isEmpty()) return;
+
+        SimSettings settings = SimSettings.getInstance();
+        MobilityModel mobilityModel = SimManager.getInstance().getMobilityModel();
+        if (serviceDemandTracker == null) {
+            serviceDemandTracker = new ServiceDemandTracker(SimManager.getInstance().getLoadGeneratorModel().getTaskList());
+
+            int[] serviceIndices = serviceDemandTracker.getServiceIndices();
+            uavHostsService = new boolean[allUavs.size()][serviceIndices.length];
+            for (int u = 0; u < allUavs.size(); u++) {
+                for (int slot = 0; slot < serviceIndices.length; slot++) {
+                    uavHostsService[u][slot] = allUavs.get(u).canServeTaskType(serviceIndices[slot]);
+                }
+            }
+        }
+
+        ServiceDemandTracker.Demand demand = serviceDemandTracker.snapshot(CloudSim.clock(),
+                settings.getServiceDemandWindow(), settings.getServiceDemandLookahead(), mobilityModel);
+        if (demand.size() == 0) return;
+
+        double[][] targets = switch (this.centralizedMobilityOption) {
+            case SERVICE_KMEANS -> ServiceAwareUavPolicies.serviceKMeans(allUavs, uavHostsService, demand);
+            case SERVICE_APF -> ServiceAwareUavPolicies.serviceApf(allUavs, uavHostsService, demand);
+            case SERVICE_CAPACITY_FILL -> ServiceAwareUavPolicies.serviceCapacityFill(allUavs, uavHostsService, demand);
+            default -> throw new IllegalStateException("Not a service-aware policy: " + this.centralizedMobilityOption);
+        };
+
+        for (int u = 0; u < allUavs.size(); u++) {
+            if (targets[u] != null)
+                alertUav(allUavs.get(u), targets[u][0], targets[u][1]);
         }
     }
 
@@ -783,14 +854,14 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
 
     // ONAT: Clamps a grid coordinate index into [0, count) - a device sitting exactly on
     // the eastern/northern map bound would otherwise compute an out-of-range index.
-    private static int clampIndex(int index, int count) {
+    static int clampIndex(int index, int count) {
         return Math.max(0, Math.min(count - 1, index));
     }
 
     // ONAT: sqrt(dx^2+dy^2+SOFTENING^2)^3, i.e. the softened ||r||^3 denominator shared by
     // both APF force terms - never zero, so it never produces NaN/Infinity even when two
     // points coincide exactly.
-    private static double cubedSoftenedDistance(double dx, double dy) {
+    static double cubedSoftenedDistance(double dx, double dy) {
         double softenedDistance = Math.sqrt(dx * dx + dy * dy + APF_SOFTENING_SQUARED);
         return softenedDistance * softenedDistance * softenedDistance;
     }
@@ -828,7 +899,7 @@ public class CentralizedUAVMobility extends UAVMobilityModel {
     // controller's OWN decision cadence (centralized_controller_interval), not UAV.
     // getMaxMoveDistance() (which is tied to uav_mobility_interval, the decentralized
     // per-UAV self-scheduling cadence BasicUAVMobility uses instead).
-    private static double maxMoveDistance(UAV uav) {
+    static double maxMoveDistance(UAV uav) {
         return uav.getSpeed() * SimSettings.getInstance().getCentralizedControllerInterval();
     }
 
