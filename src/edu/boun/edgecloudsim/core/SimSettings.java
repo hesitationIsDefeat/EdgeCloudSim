@@ -18,6 +18,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Properties;
 
@@ -115,7 +116,16 @@ public class SimSettings {
     private String[] UAV_MOBILITY_OPTIONS;
 	// ONAT: service placement policies to compare in one run (e.g. tutorial17's
 	// "SINGLE,ALL") - see getServicePlacementPolicies() and edge_server/uav/ServicePlacementPolicy.
-	private String[] SERVICE_PLACEMENT_POLICIES;	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
+	private String[] SERVICE_PLACEMENT_POLICIES;
+	// ONAT: world-event knobs (tutorial19+), all defaulted to "off"/harmless so scenarios that
+	// don't use events are unaffected - see isEventRequestsOnly()/isEventGatherEnabled()/
+	// getEventGatherSpeed() and the service-aware UAV mobility window getters below.
+	private boolean EVENT_REQUESTS_ONLY;
+	private boolean EVENT_GATHER;
+	private double EVENT_GATHER_SPEED;
+	private double SERVICE_DEMAND_WINDOW;
+	private double SERVICE_DEMAND_LOOKAHEAD;
+	// ONAT: How often (seconds) a UAV re-evaluates/moves - see edge_server/uav/UAV.
 	private double UAV_MOBILITY_INTERVAL;
 	// ONAT: How often (seconds) a centralized controller decides new UAV targets - see
 	// mobility/uav/CentralizedUAVMobility. Independent from UAV_MOBILITY_INTERVAL (used by
@@ -406,6 +416,15 @@ public class SimSettings {
 			for (int i = 0; i < SAR_APPLICATION_NAMES.length; i++)
 				SAR_APPLICATION_NAMES[i] = SAR_APPLICATION_NAMES[i].trim();
 			SAR_PRIORITY_FACTOR = Double.parseDouble(prop.getProperty("sar_priority_factor", "1.0"));
+
+			// ONAT: world events (tutorial19) - whether users send ONLY the event's request while
+			// inside an event's radius (and nothing else), whether users walk to the events,
+			// how fast, and the time window the service-aware UAV policies read the demand from.
+			EVENT_REQUESTS_ONLY = Boolean.parseBoolean(prop.getProperty("event_requests_only", "false").trim());
+			EVENT_GATHER = Boolean.parseBoolean(prop.getProperty("event_gather", "false").trim());
+			EVENT_GATHER_SPEED = Double.parseDouble(prop.getProperty("event_gather_speed", "5.0").trim()); //m/s
+			SERVICE_DEMAND_WINDOW = Double.parseDouble(prop.getProperty("service_demand_window", "60").trim()); //seconds
+			SERVICE_DEMAND_LOOKAHEAD = Double.parseDouble(prop.getProperty("service_demand_lookahead", "0").trim()); //seconds
 
 			NORTHERN_BOUND = Double.parseDouble(prop.getProperty("northern_bound", "0"));
 			SOUTHERN_BOUND = Double.parseDouble(prop.getProperty("southern_bound", "0"));
@@ -764,6 +783,42 @@ public class SimSettings {
     }
 
     /**
+     * ONAT: true if users send requests ONLY while inside an active world event's radius, and
+     * then only that event's request (see event_requests_only in default_config.properties).
+     * False (the default): users keep their normal requests and events add to them.
+     */
+    public boolean isEventRequestsOnly()
+    {
+        return EVENT_REQUESTS_ONLY;
+    }
+
+    /** ONAT: true if users near an active world event walk to it (event_gather). */
+    public boolean isEventGatherEnabled()
+    {
+        return EVENT_GATHER;
+    }
+
+    /** ONAT: speed (m/s) of a user walking to / returning from a world event (event_gather_speed). */
+    public double getEventGatherSpeed()
+    {
+        return EVENT_GATHER_SPEED;
+    }
+
+    /** ONAT: how far back (seconds) the service-aware UAV policies look for requests
+     * (service_demand_window, default 60) - see mobility/uav/ServiceDemandTracker. */
+    public double getServiceDemandWindow()
+    {
+        return SERVICE_DEMAND_WINDOW;
+    }
+
+    /** ONAT: how far ahead (seconds) the service-aware UAV policies also read the pre-generated
+     * requests (service_demand_lookahead, default 0 = only requests already made). */
+    public double getServiceDemandLookahead()
+    {
+        return SERVICE_DEMAND_LOOKAHEAD;
+    }
+
+    /**
      * returns how often (seconds) a UAV re-evaluates/moves
      */
     public double getUavMobilityInterval()
@@ -1108,6 +1163,62 @@ public class SimSettings {
 	public String getStreamName(int streamIndex)
 	{
 		return streamNames[streamIndex];
+	}
+
+	/** ONAT: the task type of the application or stream with this name (applications are
+	 * looked up first, names are unique across both), or -1 if there is none. */
+	public int getTaskTypeByName(String name)
+	{
+		for (int i = 0; i < taskNames.length; i++) {
+			if(taskNames[i].equals(name))
+				return i;
+		}
+		for (int i = 0; i < streamNames.length; i++) {
+			if(streamNames[i].equals(name))
+				return getStreamTaskType(i);
+		}
+		return -1;
+	}
+
+	/** ONAT: every distinct applications.xml service_index (see getTaskServiceIndex()), in the
+	 * order of first appearance - i.e. the services a UAV can host. */
+	public int[] getDistinctServiceIndices()
+	{
+		LinkedHashSet<Integer> services = new LinkedHashSet<Integer>();
+		for (int i = 0; i < taskNames.length; i++) {
+			services.add(taskServiceIndex[i]);
+		}
+		int[] result = new int[services.size()];
+		int next = 0;
+		for (int service : services) {
+			result[next++] = service;
+		}
+		return result;
+	}
+
+	/**
+	 * ONAT: the services a request of this task type needs: the application's own service_index,
+	 * or - for a stream - one entry per node (so a service used by two nodes appears twice),
+	 * in dependency order.
+	 */
+	public int[] getServiceIndicesOfTaskType(int taskType)
+	{
+		if(!isStreamTaskType(taskType))
+			return new int[] { taskServiceIndex[taskType] };
+
+		int[][] layers = streamNodeApplications[getStreamIndex(taskType)];
+		int nodeCount = 0;
+		for (int[] layer : layers) {
+			nodeCount += layer.length;
+		}
+		int[] result = new int[nodeCount];
+		int next = 0;
+		for (int[] layer : layers) {
+			for (int application : layer) {
+				result[next++] = taskServiceIndex[application];
+			}
+		}
+		return result;
 	}
 
 	/** ONAT: share (%) of devices whose request type is this stream, alongside the
