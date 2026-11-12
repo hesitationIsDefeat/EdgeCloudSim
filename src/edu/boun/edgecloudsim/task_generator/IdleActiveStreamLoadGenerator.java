@@ -38,24 +38,27 @@ public class IdleActiveStreamLoadGenerator extends LoadGeneratorModel {
 	/** The request type (application or stream task type) assigned to each mobile device */
 	private int taskTypeOfDevices[];
 
+	/**
+	 * Size and length distributions of every application that is sampled (see
+	 * getSampledApplications()): [application][0] = input size, [1] = output size, [2] = task
+	 * length. Set by initializeModel(); null entries for applications that are never sampled.
+	 */
+	protected ExponentialDistribution[][] expRngList;
+
 	public IdleActiveStreamLoadGenerator(int _numberOfMobileDevices, double _simulationTime, String _simScenario) {
 		super(_numberOfMobileDevices, _simulationTime, _simScenario);
 	}
 
-	@Override
-	public void initializeModel() {
+	/**
+	 * The applications whose sizes/lengths have to be sampled: one that some device can request
+	 * on its own (usage_percentage above 0) or that some stream runs as a node - an application
+	 * used by neither never needs generators. A subclass that creates requests of its own
+	 * overrides this to add the applications those use.
+	 */
+	protected boolean[] getSampledApplications() {
 		SimSettings SS = SimSettings.getInstance();
-		int numOfApplications = SS.getNumOfApplications();
-		int numOfTaskTypes = SS.getNumOfTaskTypes();
-
-		validateUsagePercentages(SS, numOfTaskTypes);
-
-		taskList = new ArrayList<TaskProperty>();
-
-		// An application is only sampled if some device can request it on its own or some
-		// stream runs it as a node - an application used by neither never needs generators
-		boolean[] sampled = new boolean[numOfApplications];
-		for (int a = 0; a < numOfApplications; a++) {
+		boolean[] sampled = new boolean[SS.getNumOfApplications()];
+		for (int a = 0; a < sampled.length; a++) {
 			sampled[a] = SS.getTaskLookUpTable()[a][0] != 0;
 		}
 		for (int s = 0; s < SS.getNumOfStreams(); s++) {
@@ -65,17 +68,33 @@ public class IdleActiveStreamLoadGenerator extends LoadGeneratorModel {
 				}
 			}
 		}
+		return sampled;
+	}
 
-		// [application][0] = input size distribution, [1] = output size, [2] = task length
-		ExponentialDistribution[][] expRngList = new ExponentialDistribution[numOfApplications][3];
-		for (int a = 0; a < numOfApplications; a++) {
+	/** Creates the exponential size/length distributions of the sampled applications. */
+	protected ExponentialDistribution[][] createDistributions(boolean[] sampled) {
+		SimSettings SS = SimSettings.getInstance();
+		ExponentialDistribution[][] distributions = new ExponentialDistribution[sampled.length][3];
+		for (int a = 0; a < sampled.length; a++) {
 			if (!sampled[a])
 				continue;
-			expRngList[a][0] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][5]);
-			expRngList[a][1] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][6]);
-			expRngList[a][2] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][7]);
+			distributions[a][0] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][5]);
+			distributions[a][1] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][6]);
+			distributions[a][2] = new ExponentialDistribution(SS.getTaskLookUpTable()[a][7]);
 		}
+		return distributions;
+	}
 
+	@Override
+	public void initializeModel() {
+		SimSettings SS = SimSettings.getInstance();
+		int numOfTaskTypes = SS.getNumOfTaskTypes();
+
+		validateUsagePercentages(SS, numOfTaskTypes);
+
+		taskList = new ArrayList<TaskProperty>();
+
+		expRngList = createDistributions(getSampledApplications());
 		taskTypeOfDevices = new int[numberOfMobileDevices];
 		for (int i = 0; i < numberOfMobileDevices; i++) {
 			int randomTaskType = selectTaskType(SS, numOfTaskTypes);
@@ -132,7 +151,7 @@ public class IdleActiveStreamLoadGenerator extends LoadGeneratorModel {
 	 * workload sampled exactly like a standalone request of the node's application would
 	 * (including that application's partitioning, if it is partitionable).
 	 */
-	private StreamTaskProperty createStreamRequest(SimSettings SS, int deviceId, int streamIndex,
+	protected StreamTaskProperty createStreamRequest(SimSettings SS, int deviceId, int streamIndex,
 			double startTime, ExponentialDistribution[][] expRngList) {
 		int[][] nodeApplications = SS.getStreamNodeApplications(streamIndex);
 		List<List<TaskProperty>> nodeLayers = new ArrayList<List<TaskProperty>>(nodeApplications.length);
