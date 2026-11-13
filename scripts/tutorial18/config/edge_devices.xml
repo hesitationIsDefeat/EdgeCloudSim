@@ -1,0 +1,316 @@
+<?xml version="1.0"?>
+<edge_devices>
+    <!-- ONAT: 4 datacenters (one per map quadrant), 4 UAVs each = 16 UAVs total,
+         matching tutorial10's layout - spread across the whole map since users move
+         with a random walk (no convergence zone) rather than gathering at fixed spots.
+         No host declares a service_capability here: which of applications.xml's 4
+         SERVICE_APP_* services (see their service_index) each UAV hosts is decided by
+         the service placement policy swept via default_config.properties'
+         service_placement_policies (see ServicePlacementPolicy), which overrides any
+         service_capability tag in this file. UAVs are numbered in the order they appear
+         below. A task can be rejected (REJECTED_DUE_TO_VM_CAPACITY) if no UAV hosting
+         its service is within SERVICE_RADIUS or every such UAV is already at capacity. -->
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>250</x_pos>
+            <y_pos>250</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>750</x_pos>
+            <y_pos>250</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>250</x_pos>
+            <y_pos>750</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+
+    <datacenter arch="ARM" os="Linux" vmm="KVM">
+        <costPerBw>0.5</costPerBw>
+        <costPerSec>15.0</costPerSec>
+        <costPerMem>0.2</costPerMem>
+        <costPerStorage>0.1</costPerStorage>
+
+        <location>
+            <x_pos>750</x_pos>
+            <y_pos>750</y_pos>
+            <wlan_id>0</wlan_id>
+            <attractiveness>0</attractiveness>
+        </location>
+
+        <hosts>
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+
+            <host>
+                <core>8</core>
+                <mips>5000</mips>
+                <ram>16384</ram>
+                <storage>128000</storage>
+                <VMs>
+                    <VM vmm="KVM">
+                        <core>1</core>
+                        <mips>2500</mips>
+                        <ram>8000</ram>
+                        <storage>40000</storage>
+                    </VM>
+                </VMs>
+            </host>
+        </hosts>
+    </datacenter>
+</edge_devices>

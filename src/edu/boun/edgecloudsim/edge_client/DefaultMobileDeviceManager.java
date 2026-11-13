@@ -18,6 +18,7 @@ package edu.boun.edgecloudsim.edge_client;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,6 +37,7 @@ import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.core.SimSettings.NETWORK_DELAY_TYPES;
 import edu.boun.edgecloudsim.network.NetworkModel;
+import edu.boun.edgecloudsim.utils.StreamTaskProperty;
 import edu.boun.edgecloudsim.utils.TaskProperty;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimLogger;
@@ -61,8 +63,18 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	// (a plain task's own cloudlet id, or a partitioned/DAG task's parentTaskId) as its
 	// event data.
 	private static final int TASK_TIMEOUT = BASE + 5;
+	// ONAT: fires right after the last node of a stream layer completed to submit the next
+	// layer's nodes - carries the stream id as its event data (see onStreamNodeEnded()).
+	private static final int SUBMIT_NEXT_STREAM_LAYER = BASE + 6;
+	// ONAT: the "stream id" of a task that is not a node of a stream
+	private static final int NO_STREAM = -1;
 	private int taskIdCounter=0;  // Counter for generating unique task IDs
 	private final Map<Integer, PartitionState> partitionStateMap = new HashMap<Integer, PartitionState>();
+	// ONAT: every stream request still being executed, keyed by the id it is logged under
+	private final Map<Integer, StreamState> streamStateMap = new HashMap<Integer, StreamState>();
+	// ONAT: stream node task id (a plain task's own id, or a partitioned node's parent id) ->
+	// id of the stream it belongs to, until the node ends - see recordStreamNodeOutput()
+	private final Map<Integer, Integer> streamNodeUnits = new HashMap<Integer, Integer>();
 	// ONAT: hard task-timeout bookkeeping (see SimSettings.isTaskTimeoutEnabled(taskType)/
 	// getTaskTimeout(taskType)) - empty/unused for every app that doesn't set task_timeout.
 	// Keyed by top-level task id (own cloudlet id for a plain task, parentTaskId for a
@@ -90,10 +102,105 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 
 	/**
 	 * Initializes the mobile device manager.
-	 * No special initialization required for default implementation.
+	 * ONAT: registers itself to be told how the nodes of a stream end (see onStreamNodeEnded()).
 	 */
 	@Override
 	public void initialize() {
+		// ONAT: stream nodes' outcomes are reported by the logger (see SimLogger.addStreamNodeLog())
+		SimLogger.getInstance().setStreamNodeListener(this::onStreamNodeEnded);
+	}
+
+	/**
+	 * ONAT: a stream request being executed. A stream is a DAG whose nodes are applications:
+	 * every node of a layer is submitted as an application task of its own (so it is
+	 * offloaded, and may even be partitioned, exactly like that application requested alone)
+	 * once every node of the previous layer has completed AND that layer's output has been
+	 * relayed to the UAVs the next layer runs on (see releaseStreamLayer()); the nodes of one
+	 * layer run in parallel. Any failing node fails the whole stream - there is no partial
+	 * success - and a timeout lets the running nodes finish first (see timeoutStream()).
+	 */
+	private static class StreamState {
+		private final int streamId;
+		// Layers not released yet, in dependency order - consumed one per finished layer
+		private final Deque<List<TaskProperty>> remainingLayers;
+		// Size of the layer most recently STARTED, and how many of its nodes have ended
+		// (completed or failed) - the layer is running while endedNodes < currentLayerSize
+		private int currentLayerSize;
+		private int endedNodes;
+		// Output data (KB) of the current layer's completed nodes, per UAV (host id) that
+		// produced it - the stream counterpart of PartitionState.currentLayerOutputKbByHost,
+		// consumed by getInterLayerRelayDelay() when the layer is done. Reset per layer.
+		private final Map<Integer, Long> layerOutputKbByHost;
+		// The stream's timeout fired while nodes were still running: they finish, no further
+		// layer starts, and the stream is logged TIMED_OUT once the last of them has ended
+		private boolean timedOut;
+		// Set once the stream is resolved (failed or timed out), so a layer still being
+		// started knows to stop
+		private boolean resolved;
+
+		private StreamState(int streamId, Deque<List<TaskProperty>> remainingLayers) {
+			this.streamId = streamId;
+			this.remainingLayers = remainingLayers;
+			this.currentLayerSize = 0;
+			this.endedNodes = 0;
+			this.layerOutputKbByHost = new HashMap<Integer, Long>();
+			this.timedOut = false;
+			this.resolved = false;
+		}
+	}
+
+	/**
+	 * ONAT: a partitioned task (flat or DAG) already split, with its first sibling batch built
+	 * but nothing registered or submitted yet - so the UAVs of that batch can be chosen (and
+	 * the relay delay towards them worked out) before the task starts. See
+	 * preparePartitionedTask()/startPartitionedTask().
+	 */
+	private static class PreparedPartition {
+		private final TaskProperty edgeTask;
+		private final int parentTaskId;
+		private final List<Task> firstBatch;
+		private final int totalChildCount;
+		// Layers after the first one for a DAG, null for a flat partition
+		private final Deque<List<TaskProperty>> remainingLayers;
+
+		private PreparedPartition(TaskProperty edgeTask, int parentTaskId, List<Task> firstBatch, int totalChildCount, Deque<List<TaskProperty>> remainingLayers) {
+			this.edgeTask = edgeTask;
+			this.parentTaskId = parentTaskId;
+			this.firstBatch = firstBatch;
+			this.totalChildCount = totalChildCount;
+			this.remainingLayers = remainingLayers;
+		}
+	}
+
+	/**
+	 * ONAT: one node of a stream layer that is about to start: either a plain application task
+	 * or a prepared partitioned one, plus the VMs the orchestrator chose for its tasks (in the
+	 * order of getPlacementTasks()).
+	 */
+	private static class StreamNodePlan {
+		private final Task plainTask;
+		private final PreparedPartition partition;
+		private List<Vm> selectedVMs;
+
+		private StreamNodePlan(Task plainTask, PreparedPartition partition) {
+			this.plainTask = plainTask;
+			this.partition = partition;
+		}
+
+		/** The tasks that need a UAV before this node can start. */
+		private List<Task> getPlacementTasks() {
+			return plainTask != null ? Collections.singletonList(plainTask) : partition.firstBatch;
+		}
+	}
+
+	private static class PendingStreamLayer {
+		private final int streamId;
+		private final List<StreamNodePlan> plans;
+
+		private PendingStreamLayer(int streamId, List<StreamNodePlan> plans) {
+			this.streamId = streamId;
+			this.plans = plans;
+		}
 	}
 
 	private static class PendingTaskSubmission {
@@ -360,7 +467,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				// a sibling sub-task has since failed the whole partition, since the
 				// network transfer for THIS task already completed (matching the
 				// uploadStarted call made when it was submitted).
-				networkModel.uploadFinished(task.getSubmittedLocation(), task.isPartitionChild() && selectedVm != null ? selectedVm.getHost().getId() : SimSettings.GENERIC_EDGE_DEVICE_ID);
+				// ONAT: a plain stream node is uploaded to its preselected VM exactly like a
+				// partition child (see submitPlainTaskToVm()).
+				networkModel.uploadFinished(task.getSubmittedLocation(), selectedVm != null ? selectedVm.getHost().getId() : SimSettings.GENERIC_EDGE_DEVICE_ID);
 
 				if (task.isPartitionChild()) {
 					PartitionState partitionState = partitionStateMap.get(task.getParentTaskId());
@@ -370,7 +479,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				}
 				
 				// Submit task to appropriate edge VM
-				if (task.isPartitionChild())
+				if (task.isPartitionChild() || selectedVm != null)
 					submitTaskToVm(task, 0, selectedVm);
 				else
 					submitTaskToVm(task, 0, SimSettings.GENERIC_EDGE_DEVICE_ID);
@@ -433,6 +542,9 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 							// never uploads/downloads anything itself.
 							SimLogger.getInstance().setUploadDelay(partitionState.parentTaskId, partitionState.uploadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
 							SimLogger.getInstance().setDownloadDelay(partitionState.parentTaskId, partitionState.downloadDelaySum, NETWORK_DELAY_TYPES.WLAN_DELAY);
+							// ONAT: for a stream node, its output (what its last layer produced)
+							// is what the next stream layer may have to relay
+							recordStreamNodeOutput(partitionState.parentTaskId, partitionState.currentLayerOutputKbByHost);
 							SimLogger.getInstance().taskEnded(partitionState.parentTaskId, CloudSim.clock());
 							partitionStateMap.remove(partitionState.parentTaskId);
 							resolveTimeout(partitionState.parentTaskId);
@@ -442,6 +554,10 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 				}
 				
 				// Log task completion
+				// ONAT: a stream node's output is what the next stream layer may have to relay
+				// (a task that ran on the cloud has none on any UAV)
+				if (task.getAssociatedDatacenterId() != SimSettings.CLOUD_DATACENTER_ID)
+					recordStreamNodeOutput(task.getCloudletId(), Collections.singletonMap(task.getAssociatedHostId(), task.getCloudletOutputSize()));
 				if (!timedOutTaskIds.remove(task.getCloudletId())) {
 					SimLogger.getInstance().taskEnded(task.getCloudletId(), CloudSim.clock());
 				}
@@ -462,6 +578,17 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 					break;
 				}
 				submitChildTaskBatch(pending.parentTaskId, partitionState, pending.childTasks, pending.selectedVMs, networkModel);
+				break;
+			}
+			case SUBMIT_NEXT_STREAM_LAYER:
+			{
+				PendingStreamLayer pending = (PendingStreamLayer) ev.getData();
+				StreamState streamState = streamStateMap.get(pending.streamId);
+				// Gone if the stream failed/timed out during the relay delay - nothing of
+				// the layer was registered anywhere yet, so there is nothing to undo
+				if (streamState != null) {
+					startStreamLayer(streamState, pending.plans);
+				}
 				break;
 			}
 			default:
@@ -488,7 +615,13 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 			return;
 		}
 
-		if (partitionStateMap.containsKey(topLevelTaskId)) {
+		if (streamStateMap.containsKey(topLevelTaskId)) {
+			// Nodes already running keep going untouched, exactly like a timed-out
+			// partitioned task's children; no further layer is submitted though, since
+			// the stream is no longer in streamStateMap.
+			timeoutStream(topLevelTaskId);
+		}
+		else if (partitionStateMap.containsKey(topLevelTaskId)) {
 			// Children keep running untouched - failPartition only marks the parent as
 			// resolved/logs once; the existing partitionState.failed guard already makes
 			// every child's own eventual natural outcome a no-op for pipeline-advancement
@@ -504,21 +637,28 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	/**
 	 * Submits a task from a mobile device for processing.
 	 * Handles orchestration decisions and network delay simulation for task offloading.
+	 * ONAT: a {@link StreamTaskProperty} is a stream request instead (see submitStream()).
 	 * 
 	 * @param edgeTask Task properties including requirements and mobile device context
 	 */
 	public void submitTask(TaskProperty edgeTask) {
+		if (edgeTask instanceof StreamTaskProperty) {
+			submitStream((StreamTaskProperty) edgeTask);
+			return;
+		}
+		submitApplicationTask(edgeTask);
+	}
+
+	/**
+	 * Submits one application task requested on its own by a device: offloaded by the edge
+	 * orchestrator (plain, partitioned or DAG-partitioned) and counted in the statistics. The
+	 * nodes of a stream take a different route (see releaseStreamLayer()/startStreamLayer()),
+	 * since where they run has to be known before they start.
+	 */
+	private void submitApplicationTask(TaskProperty edgeTask) {
 		NetworkModel networkModel = SimManager.getInstance().getNetworkModel();
 		if (edgeTask.isPartitionable()) {
-			// ONAT: a PARTITION_<N> override (see SimSettings.setPartitionCountOverride())
-			// forces even a DAG-enabled task into a flat N-way split - its dag_layers are
-			// ignored entirely for that run - so a layered DAG ("FULL") can be compared
-			// against a flat baseline with the same (or any other) child count.
-			if (SimSettings.getInstance().isTaskDag(edgeTask.getTaskType())
-					&& !SimSettings.getInstance().isPartitionCountOverrideActive())
-				submitDagTask(edgeTask, networkModel);
-			else
-				submitPartitionableTask(edgeTask, networkModel);
+			startPartitionedTask(preparePartitionedTask(edgeTask), NO_STREAM, null, networkModel);
 			return;
 		}
 		
@@ -600,51 +740,63 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		}
 	}
 
-	private void submitPartitionableTask(TaskProperty edgeTask, NetworkModel networkModel) {
+	/**
+	 * Splits a partitionable task into its sibling batches and builds the first batch's child
+	 * tasks, WITHOUT registering or submitting anything - so a caller can choose the batch's
+	 * UAVs first (see releaseStreamLayer()). A flat partition has only that one batch; a DAG
+	 * (dag_layers, see SimSettings.isTaskDag()) keeps its later layers to be submitted as each
+	 * running layer completes (see PartitionState's remainingLayers/isDag fields).
+	 */
+	private PreparedPartition preparePartitionedTask(TaskProperty edgeTask) {
 		int parentTaskId = ++taskIdCounter;
-		SimLogger.getInstance().addLog(edgeTask.getMobileDeviceId(), parentTaskId, SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
-		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
-		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
-		armTimeout(parentTaskId, edgeTask.getTaskType());
+
+		// ONAT: a PARTITION_<N> override (see SimSettings.setPartitionCountOverride())
+		// forces even a DAG-enabled task into a flat N-way split - its dag_layers are
+		// ignored entirely for that run - so a layered DAG ("FULL") can be compared
+		// against a flat baseline with the same (or any other) child count.
+		if (SimSettings.getInstance().isTaskDag(edgeTask.getTaskType())
+				&& !SimSettings.getInstance().isPartitionCountOverrideActive()) {
+			Deque<List<TaskProperty>> dagLayers = splitTaskPropertyIntoDagLayers(edgeTask);
+			int totalDagChildCount = 0;
+			for (List<TaskProperty> layer : dagLayers) {
+				totalDagChildCount += layer.size();
+			}
+
+			List<TaskProperty> firstLayer = dagLayers.poll();
+			return new PreparedPartition(edgeTask, parentTaskId,
+					buildChildTasks(parentTaskId, firstLayer, totalDagChildCount), totalDagChildCount, dagLayers);
+		}
 
 		List<TaskProperty> childProperties = splitTaskProperty(edgeTask);
-		PartitionState partitionState = new PartitionState(parentTaskId, childProperties.size());
-		partitionStateMap.put(parentTaskId, partitionState);
-
-		List<Task> childTasks = buildChildTasks(parentTaskId, childProperties, childProperties.size());
-		submitChildTaskBatch(parentTaskId, partitionState, childTasks, networkModel);
+		return new PreparedPartition(edgeTask, parentTaskId,
+				buildChildTasks(parentTaskId, childProperties, childProperties.size()), childProperties.size(), null);
 	}
 
 	/**
-	 * Submits a DAG (Directed Acyclic Graph) task: a partitionable task whose
-	 * sub-tasks are grouped into dependent LAYERS instead of one flat, mutually
-	 * independent batch. Only the first layer is submitted here - every later layer
-	 * is submitted from processOtherEvent's RESPONSE_RECEIVED_BY_MOBILE_DEVICE case,
-	 * once every sub-task in the previous layer has completed (see PartitionState's
-	 * remainingLayers/isDag fields).
+	 * Registers and starts a task prepared by preparePartitionedTask(): logs it (as a stream
+	 * node if streamId says so), tracks it in a PartitionState and submits its first batch -
+	 * on preselectedVMs (same order as the batch) if given, else on VMs selected right here.
+	 * Only a DAG's first layer is submitted here; every later layer follows from the
+	 * RESPONSE_RECEIVED_BY_MOBILE_DEVICE case.
 	 */
-	private void submitDagTask(TaskProperty edgeTask, NetworkModel networkModel) {
-		int parentTaskId = ++taskIdCounter;
-		SimLogger.getInstance().addLog(edgeTask.getMobileDeviceId(), parentTaskId, SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
+	private void startPartitionedTask(PreparedPartition prepared, int streamId, List<Vm> preselectedVMs, NetworkModel networkModel) {
+		TaskProperty edgeTask = prepared.edgeTask;
+		int parentTaskId = prepared.parentTaskId;
+		addTaskLog(streamId, edgeTask.getMobileDeviceId(), parentTaskId, edgeTask.getTaskType(), (int)edgeTask.getLength(), (int)edgeTask.getInputFileSize(), (int)edgeTask.getOutputFileSize());
 		SimLogger.getInstance().taskStarted(parentTaskId, CloudSim.clock());
 		SimLogger.getInstance().taskAssigned(parentTaskId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
-		armTimeout(parentTaskId, edgeTask.getTaskType());
+		if (streamId == NO_STREAM)
+			armTimeout(parentTaskId, edgeTask.getTaskType());
 
-		Deque<List<TaskProperty>> dagLayers = splitTaskPropertyIntoDagLayers(edgeTask);
-		int totalDagChildCount = 0;
-		for (List<TaskProperty> layer : dagLayers) {
-			totalDagChildCount += layer.size();
+		PartitionState partitionState = new PartitionState(parentTaskId, prepared.firstBatch.size());
+		if (prepared.remainingLayers != null) {
+			partitionState.isDag = true;
+			partitionState.totalDagChildCount = prepared.totalChildCount;
+			partitionState.remainingLayers = prepared.remainingLayers;
 		}
-
-		List<TaskProperty> firstLayer = dagLayers.poll();
-		PartitionState partitionState = new PartitionState(parentTaskId, firstLayer.size());
-		partitionState.isDag = true;
-		partitionState.totalDagChildCount = totalDagChildCount;
-		partitionState.remainingLayers = dagLayers;
 		partitionStateMap.put(parentTaskId, partitionState);
 
-		List<Task> childTasks = buildChildTasks(parentTaskId, firstLayer, totalDagChildCount);
-		submitChildTaskBatch(parentTaskId, partitionState, childTasks, networkModel);
+		submitChildTaskBatch(parentTaskId, partitionState, prepared.firstBatch, preselectedVMs, networkModel);
 	}
 
 	/**
@@ -673,19 +825,13 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 	}
 
 	/**
-	 * Selects VMs for and starts the upload of a whole sibling batch (a flat
-	 * partition's only batch, or one DAG layer) - shared by submitPartitionableTask,
-	 * submitDagTask (first layer), and the RESPONSE_RECEIVED_BY_MOBILE_DEVICE layer
-	 * hand-off (later layers).
-	 */
-	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, NetworkModel networkModel) {
-		submitChildTaskBatch(parentTaskId, partitionState, childTasks, null, networkModel);
-	}
-
-	/**
-	 * Same as above, but with the batch's VMs already chosen by the caller (same order as
-	 * childTasks) - null means "select them here". A DAG layer after the first has its VMs
-	 * chosen as soon as the previous layer finishes (see getInterLayerRelayDelay()).
+	 * Starts the upload of a whole sibling batch (a flat partition's only batch, or one DAG
+	 * layer) - shared by startPartitionedTask (a DAG's first layer, or the flat batch) and the
+	 * RESPONSE_RECEIVED_BY_MOBILE_DEVICE layer hand-off (later layers).
+	 * The batch's VMs may already be chosen by the caller (same order as childTasks) - null
+	 * means "select them here". A DAG layer after the first has its VMs chosen as soon as the
+	 * previous layer finishes (see getInterLayerRelayDelay()), and so has a stream node's
+	 * first batch (see releaseStreamLayer()).
 	 */
 	private void submitChildTaskBatch(int parentTaskId, PartitionState partitionState, List<Task> childTasks, List<Vm> preselectedVMs, NetworkModel networkModel) {
 		partitionState.completedChildren = 0;
@@ -773,7 +919,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		long[] downloadParts = splitValue(edgeTask.getOutputFileSize(), childCount);
 
 		for (int i = 0; i < childCount; i++) {
-			childProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[i], uploadParts[i], downloadParts[i]));
+			childProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), edgeTask.getTaskType(), edgeTask.getPesNumber(), lengthParts[i], uploadParts[i], downloadParts[i]));
 		}
 
 		return childProperties;
@@ -835,7 +981,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		for (int layerSize : layerSizes) {
 			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
 			for (int i = 0; i < layerSize; i++) {
-				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), edgeTask.getTaskType(), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
 				childIndex++;
 			}
 			dagLayers.add(layerProperties);
@@ -864,7 +1010,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 
 			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
 			for (int i = 0; i < layerSize; i++) {
-				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[i], uploadParts[i], downloadParts[i]));
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), edgeTask.getTaskType(), edgeTask.getPesNumber(), lengthParts[i], uploadParts[i], downloadParts[i]));
 			}
 			dagLayers.add(layerProperties);
 		}
@@ -904,7 +1050,7 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		for (int layerSize : layerSizes) {
 			List<TaskProperty> layerProperties = new ArrayList<TaskProperty>(layerSize);
 			for (int i = 0; i < layerSize; i++) {
-				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), SimManager.getInstance().getLoadGeneratorModel().getTaskTypeOfDevice(edgeTask.getMobileDeviceId()), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
+				layerProperties.add(new TaskProperty(CloudSim.clock(), edgeTask.getMobileDeviceId(), edgeTask.getTaskType(), edgeTask.getPesNumber(), lengthParts[childIndex], uploadParts[childIndex], downloadParts[childIndex]));
 				childIndex++;
 			}
 			dagLayers.add(layerProperties);
@@ -983,6 +1129,240 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		// partition failed for - without this, an unrelated (non-timeout) failure would
 		// leave a stale pending-timeout entry/scheduled event around for the rest of the run.
 		resolveTimeout(parentTaskId);
+	}
+	
+	/**
+	 * ONAT: starts a stream request (see StreamState). Like a partitioned task's parent, the
+	 * stream is the ONE unit logged in the statistics - its nodes (application tasks) only feed
+	 * it their network delays and, if one fails, the failure (see SimLogger.addStreamNodeLog()).
+	 * Layers are released one at a time (see releaseStreamLayer()): the first right here, every
+	 * later one once the previous one has completed (see onStreamNodeEnded()). The stream's own
+	 * timeout - not the timeouts of the applications it runs - is armed, with the same soft
+	 * semantics as a plain task's except that the stream is only logged once its running nodes
+	 * have ended (see timeoutStream()).
+	 */
+	private void submitStream(StreamTaskProperty streamTask) {
+		SimSettings SS = SimSettings.getInstance();
+		int streamId = ++taskIdCounter;
+		SimLogger.getInstance().addLog(streamTask.getMobileDeviceId(), streamId, streamTask.getTaskType(), (int)streamTask.getLength(), (int)streamTask.getInputFileSize(), (int)streamTask.getOutputFileSize());
+		SimLogger.getInstance().taskStarted(streamId, CloudSim.clock());
+		SimLogger.getInstance().taskAssigned(streamId, SimSettings.GENERIC_EDGE_DEVICE_ID, 0, 0, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+
+		if (SS.isStreamTimeoutEnabled(streamTask.getStreamIndex())) {
+			pendingTimeouts.put(streamId, SimSettings.VM_TYPES.EDGE_VM.ordinal());
+			schedule(getId(), SS.getStreamTimeout(streamTask.getStreamIndex()), TASK_TIMEOUT, streamId);
+		}
+
+		StreamState streamState = new StreamState(streamId, new ArrayDeque<List<TaskProperty>>(streamTask.getNodeLayers()));
+		streamStateMap.put(streamId, streamState);
+		releaseStreamLayer(streamState);
+	}
+
+	/**
+	 * Releases the stream's next layer: builds every node's task(s), has the orchestrator choose
+	 * the UAVs of all of them at once (so the whole layer's cumulative load is accounted for,
+	 * like a partition batch), works out how long the finished layer's output needs to reach
+	 * those UAVs and only then, after that relay delay, starts the layer (see startStreamLayer()).
+	 * The relay is exactly a DAG layer's (see getInterLayerRelayDelay()): only output that has to
+	 * move to a different UAV costs anything, destinations receive in parallel so the slowest one
+	 * counts, it is 0 when everything already sits on the destination UAVs (and for the first
+	 * layer, which has no previous output), and a positive delay is logged on the stream
+	 * (SimLogger.addInterLayerDelay) as UAV delay, folded into its network delay.
+	 * Nothing is registered anywhere until the layer starts, so a stream that fails or times
+	 * out during the delay leaves nothing behind.
+	 */
+	private void releaseStreamLayer(StreamState streamState) {
+		NetworkModel networkModel = SimManager.getInstance().getNetworkModel();
+
+		List<StreamNodePlan> plans = new ArrayList<StreamNodePlan>();
+		List<Task> tasksToPlace = new ArrayList<Task>();
+		for (TaskProperty node : streamState.remainingLayers.poll()) {
+			StreamNodePlan plan = planStreamNode(node);
+			plans.add(plan);
+			tasksToPlace.addAll(plan.getPlacementTasks());
+		}
+
+		List<Vm> selectedVMs = SimManager.getInstance().getEdgeOrchestrator()
+				.getVmsToOffload(tasksToPlace, SimSettings.GENERIC_EDGE_DEVICE_ID);
+		int nextVm = 0;
+		for (StreamNodePlan plan : plans) {
+			int placementCount = plan.getPlacementTasks().size();
+			plan.selectedVMs = new ArrayList<Vm>(selectedVMs.subList(nextVm, nextVm + placementCount));
+			nextVm += placementCount;
+		}
+
+		double interLayerDelay = getInterLayerRelayDelay(streamState.layerOutputKbByHost, selectedVMs, networkModel);
+		if (interLayerDelay > 0)
+			SimLogger.getInstance().addInterLayerDelay(streamState.streamId, interLayerDelay);
+		schedule(getId(), interLayerDelay, SUBMIT_NEXT_STREAM_LAYER, new PendingStreamLayer(streamState.streamId, plans));
+	}
+
+	/** Builds the task(s) of one stream node - a plain task, or a partitioned task's first batch. */
+	private StreamNodePlan planStreamNode(TaskProperty node) {
+		if (node.isPartitionable())
+			return new StreamNodePlan(null, preparePartitionedTask(node));
+
+		Task task = createTask(node);
+		task.setSubmittedLocation(SimManager.getInstance().getMobilityModel().getLocation(task.getMobileDeviceId(), CloudSim.clock()));
+		return new StreamNodePlan(task, null);
+	}
+
+	/**
+	 * Starts every node of a released layer, in parallel, on the UAVs chosen for it. Each node is
+	 * an application task like any other - offloaded to a UAV hosting that application's service
+	 * or, if the orchestrator found none to take it, rejected, which fails the stream.
+	 */
+	private void startStreamLayer(StreamState streamState, List<StreamNodePlan> plans) {
+		NetworkModel networkModel = SimManager.getInstance().getNetworkModel();
+		streamState.currentLayerSize = plans.size();
+		streamState.endedNodes = 0;
+		streamState.layerOutputKbByHost.clear();
+
+		for (StreamNodePlan plan : plans) {
+			// A node already rejected (see onStreamNodeEnded) failed the stream: nothing else
+			// of this layer needs to start
+			if (streamState.resolved) {
+				break;
+			}
+			if (plan.plainTask != null)
+				submitPlainTaskToVm(plan.plainTask, plan.selectedVMs.get(0), streamState.streamId, networkModel);
+			else
+				startPartitionedTask(plan.partition, streamState.streamId, plan.selectedVMs, networkModel);
+		}
+	}
+
+	/**
+	 * Starts a plain stream node on the VM the orchestrator already chose for it: uploads to that
+	 * UAV, then binds the task to that VM when the upload is done (REQUEST_RECEIVED_BY_EDGE_DEVICE
+	 * with a preselected VM) - the way a partition child is submitted. No UAV for it (null) is
+	 * rejected like any other "no suitable VM" case.
+	 */
+	private void submitPlainTaskToVm(Task task, Vm selectedVm, int streamId, NetworkModel networkModel) {
+		addTaskLog(streamId, task.getMobileDeviceId(), task.getCloudletId(), task.getTaskType(),
+				(int)task.getCloudletLength(), (int)task.getCloudletFileSize(), (int)task.getCloudletOutputSize());
+
+		if (selectedVm == null) {
+			SimLogger.getInstance().rejectedDueToVMCapacity(task.getCloudletId(), CloudSim.clock(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
+			return;
+		}
+
+		double wlanDelay = networkModel.getUploadDelay(task.getMobileDeviceId(), selectedVm.getHost().getId(), task);
+		if (wlanDelay <= 0) {
+			SimLogger.getInstance().rejectedDueToBandwidth(task.getCloudletId(), CloudSim.clock(),
+					SimSettings.VM_TYPES.EDGE_VM.ordinal(), NETWORK_DELAY_TYPES.WLAN_DELAY);
+			return;
+		}
+
+		networkModel.uploadStarted(task.getSubmittedLocation(), selectedVm.getHost().getId());
+		SimLogger.getInstance().taskStarted(task.getCloudletId(), CloudSim.clock());
+		SimLogger.getInstance().setUploadDelay(task.getCloudletId(), wlanDelay, NETWORK_DELAY_TYPES.WLAN_DELAY);
+		schedule(getId(), wlanDelay, REQUEST_RECEIVED_BY_EDGE_DEVICE, new PendingTaskSubmission(task, selectedVm));
+	}
+
+	/**
+	 * A node of a stream ended (SimLogger.StreamNodeListener). The stream goes on with its next
+	 * layer once the whole current layer has completed, completes after the last layer, and is
+	 * over as soon as any node fails - the logger has then already recorded that failure as the
+	 * stream's own outcome, so only the bookkeeping is released here. Once the stream's timeout
+	 * has fired (see timeoutStream()) nothing else starts: the stream is logged TIMED_OUT when
+	 * the last node of the running layer has ended, whatever became of it.
+	 */
+	private void onStreamNodeEnded(int streamId, int nodeTaskId, SimLogger.TASK_STATUS status) {
+		streamNodeUnits.remove(nodeTaskId);
+
+		StreamState streamState = streamStateMap.get(streamId);
+		// Already over (e.g. failed through another node): a node still running just ends on its own
+		if (streamState == null) {
+			return;
+		}
+
+		streamState.endedNodes++;
+
+		if (streamState.timedOut) {
+			if (streamState.endedNodes >= streamState.currentLayerSize) {
+				streamState.resolved = true;
+				streamStateMap.remove(streamId);
+				SimLogger.getInstance().timedOut(streamId, CloudSim.clock(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
+			}
+			return;
+		}
+
+		if (status != SimLogger.TASK_STATUS.COMLETED) {
+			streamState.resolved = true;
+			streamStateMap.remove(streamId);
+			resolveTimeout(streamId);
+			return;
+		}
+
+		if (streamState.endedNodes < streamState.currentLayerSize) {
+			return;
+		}
+
+		if (!streamState.remainingLayers.isEmpty()) {
+			releaseStreamLayer(streamState);
+			return;
+		}
+
+		SimLogger.getInstance().taskEnded(streamId, CloudSim.clock());
+		streamState.resolved = true;
+		streamStateMap.remove(streamId);
+		resolveTimeout(streamId);
+	}
+
+	/**
+	 * The stream's timeout fired. Nodes that are running are NOT cut short: they finish
+	 * executing, no further layer starts, and the stream is logged TIMED_OUT only when the last
+	 * of them has ended (see onStreamNodeEnded()) - so whatever those nodes end up doing, the
+	 * stream fails then, at the end of their execution. If no node is running right now (the
+	 * stream is between two layers, e.g. while a layer's output is being relayed) there is
+	 * nothing to wait for and it is logged TIMED_OUT immediately.
+	 */
+	private void timeoutStream(int streamId) {
+		StreamState streamState = streamStateMap.get(streamId);
+		if (streamState == null) {
+			return;
+		}
+
+		if (streamState.endedNodes < streamState.currentLayerSize) {
+			streamState.timedOut = true;
+			// The logger must not turn a failure of those nodes into the stream's outcome
+			SimLogger.getInstance().markStreamTimeoutPending(streamId);
+			return;
+		}
+
+		streamState.resolved = true;
+		streamStateMap.remove(streamId);
+		SimLogger.getInstance().timedOut(streamId, CloudSim.clock(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
+	}
+
+	/**
+	 * Adds a finished stream node's output (KB per UAV, see StreamState.layerOutputKbByHost) to
+	 * its stream's current layer - a no-op for a task that is not a stream node or whose stream
+	 * is already over.
+	 */
+	private void recordStreamNodeOutput(int nodeTaskId, Map<Integer, Long> outputKbByHost) {
+		Integer streamId = streamNodeUnits.get(nodeTaskId);
+		if (streamId == null) {
+			return;
+		}
+		StreamState streamState = streamStateMap.get(streamId);
+		if (streamState == null) {
+			return;
+		}
+		for (Map.Entry<Integer, Long> output : outputKbByHost.entrySet()) {
+			streamState.layerOutputKbByHost.merge(output.getKey(), output.getValue(), Long::sum);
+		}
+	}
+
+	/** Logs a task under its own id - or, for a node of the stream streamId, as that stream's node. */
+	private void addTaskLog(int streamId, int deviceId, int taskId, int taskType, int taskLength, int inputSize, int outputSize) {
+		if (streamId == NO_STREAM) {
+			SimLogger.getInstance().addLog(deviceId, taskId, taskType, taskLength, inputSize, outputSize);
+		}
+		else {
+			SimLogger.getInstance().addStreamNodeLog(streamId, deviceId, taskId, taskType, taskLength, inputSize, outputSize);
+			streamNodeUnits.put(taskId, streamId);
+		}
 	}
 	
 	/**

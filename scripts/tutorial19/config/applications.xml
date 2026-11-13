@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<applications>
+	<!-- ONAT: tutorial19's 4 applications are 4 SERVICES, one per service_index (0-3), that the world
+	     events (events.xml) request - on their own, or together in the streams of streams.xml.
+	     Their workload is identical (so only WHICH UAVs are where matters, not what they run):
+	     a 2000 MI task is ~0.8 s on a UAV's 2500 MIPS VM and takes 10% of it, so a UAV holds at
+	     most 10 tasks (1 running + 9 queued) and serves ~1.25 requests/s.
+	     usage_percentage / poisson_interarrival / active_period / idle_period are the users'
+	     NORMAL request pattern - only used when default_config.properties' event_requests_only is
+	     false (then they add up to 100 together with the streams'); with event_requests_only=true
+	     users request only what the event they are at is about and these values are ignored. They
+	     are all above 0 anyway, because only an application with a usage_percentage above 0 gets
+	     its own results/plots. -->
+	<application name="VIDEO_APP">
+		<service_index>0</service_index>
+		<usage_percentage>15</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>60</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="MAP_APP">
+		<service_index>1</service_index>
+		<usage_percentage>15</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>60</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="DETECT_APP">
+		<service_index>2</service_index>
+		<usage_percentage>15</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>60</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+	<application name="ALERT_APP">
+		<service_index>3</service_index>
+		<usage_percentage>15</usage_percentage>
+		<prob_cloud_selection>0</prob_cloud_selection>
+		<poisson_interarrival>60</poisson_interarrival>
+		<delay_sensitivity>0</delay_sensitivity>
+		<active_period>60</active_period>
+		<idle_period>0</idle_period>
+		<data_upload>50</data_upload>
+		<data_download>100</data_download>
+		<task_length>2000</task_length>
+		<required_core>1</required_core>
+		<vm_utilization_on_edge>10</vm_utilization_on_edge>
+		<vm_utilization_on_cloud>3.6</vm_utilization_on_cloud>
+		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
+	</application>
+</applications>

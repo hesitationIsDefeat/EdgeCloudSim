@@ -103,15 +103,19 @@ public class SimManager extends SimEntity {
 		numOfMobileDevice = _numOfMobileDevice;
 		orchestratorPolicy = _orchestratorPolicy;
 
-		SimLogger.print("Creating tasks...");
-		loadGeneratorModel = scenarioFactory.getLoadGeneratorModel();
-		loadGeneratorModel.initializeModel();
-		SimLogger.printLine("Done, ");
-		
+		// ONAT: the mobility model is created BEFORE the load generator so a load generator can
+		// ask where a device is at a given time while it generates the requests (e.g. tutorial19's
+		// "only requests made inside a world event's radius") - no load generator or mobility
+		// model depends on the opposite order.
 		SimLogger.print("Creating device locations...");
 		mobilityModel = scenarioFactory.getMobilityModel();
 		mobilityModel.initialize();
 		SimLogger.printLine("Done.");
+
+		SimLogger.print("Creating tasks...");
+		loadGeneratorModel = scenarioFactory.getLoadGeneratorModel();
+		loadGeneratorModel.initializeModel();
+		SimLogger.printLine("Done, ");
 
 		//Generate network model
 		networkModel = scenarioFactory.getNetworkModel();

@@ -165,11 +165,94 @@ public class SimLogger {
 	/** ONAT: List tracking UAV (edge server) positions over time, "time;uav_id;x;y" per entry */
 	private LinkedList<String> uavLocationList;
 
+	/** ONAT: List of the world events of the scenario, one WorldEvent.toLogLine() per entry - see addEventLog() */
+	private LinkedList<String> eventList;
+
 	/** Singleton instance ensuring consistent logging across simulation components */
 	private static SimLogger singleton = new SimLogger();
 	
-	/** Number of application types defined in simulation configuration */
+	/** Number of task types (every application, then every stream) defined in simulation configuration */
 	private int numOfAppTypes;
+
+	/**
+	 * ONAT: size of every per-task-type statistics array: one slot per task type (every
+	 * application, then every stream) followed by three aggregates, see getTotalIndex(),
+	 * getApplicationsIndex() and getStreamsIndex().
+	 */
+	private int numOfStatSlots;
+
+	/** ONAT: slot of the aggregate over EVERY request (standalone applications and streams) -
+	 * what the console summary reports. */
+	private int getTotalIndex() {
+		return numOfAppTypes;
+	}
+
+	/** ONAT: slot of the aggregate over the standalone applications only - requests a device
+	 * made for an application itself. An application run as a node of a stream is never
+	 * counted here (nor anywhere else, see addStreamNodeLog()). Written to ALL_APPS_GENERIC.log,
+	 * which without streams is the same as the total. */
+	private int getApplicationsIndex() {
+		return numOfAppTypes + 1;
+	}
+
+	/** ONAT: slot of the aggregate over the streams only - written to ALL_STREAMS_GENERIC.log
+	 * (only when streams exist). */
+	private int getStreamsIndex() {
+		return numOfAppTypes + 2;
+	}
+
+	/**
+	 * ONAT: name of the file part (before "_GENERIC.log") the statistics of a slot are written
+	 * under, or null if that slot gets no file: an application/stream no device ever requests,
+	 * the all-requests total (console only) and the streams aggregate when there are no streams.
+	 */
+	private String getGenericFileLabel(int slot) {
+		if (slot < numOfAppTypes)
+			return SimSettings.getInstance().isTaskTypeUsed(slot) ? SimSettings.getInstance().getTaskName(slot) : null;
+		if (slot == getApplicationsIndex())
+			return "ALL_APPS";
+		if (slot == getStreamsIndex() && SimSettings.getInstance().getNumOfStreams() > 0)
+			return "ALL_STREAMS";
+		return null;
+	}
+
+	/** ONAT: fills the three aggregate slots of a per-task-type array from its task type slots. */
+	private void fillAggregates(int[] values) {
+		int numOfApplications = SimSettings.getInstance().getNumOfApplications();
+		values[getTotalIndex()] = IntStream.of(values).limit(numOfAppTypes).sum();
+		values[getApplicationsIndex()] = IntStream.of(values).limit(numOfApplications).sum();
+		values[getStreamsIndex()] = IntStream.of(values).skip(numOfApplications).limit(numOfAppTypes - numOfApplications).sum();
+	}
+
+	private void fillAggregates(double[] values) {
+		int numOfApplications = SimSettings.getInstance().getNumOfApplications();
+		values[getTotalIndex()] = DoubleStream.of(values).limit(numOfAppTypes).sum();
+		values[getApplicationsIndex()] = DoubleStream.of(values).limit(numOfApplications).sum();
+		values[getStreamsIndex()] = DoubleStream.of(values).skip(numOfApplications).limit(numOfAppTypes - numOfApplications).sum();
+	}
+
+	/** ONAT: notified when a stream node's task ends (see addStreamNodeLog()) */
+	private StreamNodeListener streamNodeListener = null;
+
+	/**
+	 * ONAT: receives the outcome of every stream node. A stream node is an application task
+	 * run on behalf of a stream request, so it is NOT counted in the statistics itself - the
+	 * stream request is (as one task, like a partitioned/DAG task's parent) - and the one
+	 * running the stream (DefaultMobileDeviceManager) learns of each node's end here instead.
+	 */
+	public interface StreamNodeListener {
+		/**
+		 * @param streamId id the stream request was logged under (see addLog())
+		 * @param nodeTaskId id the node's own task was logged under (see addStreamNodeLog())
+		 * @param status how the node ended: COMLETED, or the reason it failed
+		 */
+		void onStreamNodeEnded(int streamId, int nodeTaskId, TASK_STATUS status);
+	}
+
+	/** ONAT: registers who is told when a stream node ends - replaces any earlier listener. */
+	public void setStreamNodeListener(StreamNodeListener listener) {
+		streamNodeListener = listener;
+	}
 	
 	private File successFile = null, failFile = null;
 	private FileWriter successFW = null, failFW = null;
@@ -387,8 +470,10 @@ public class SimLogger {
 		vmLoadList = new LinkedList<VmLoadLogItem>();
 		apDelayList = new LinkedList<ApDelayLogItem>();
 		uavLocationList = new LinkedList<String>();
+		eventList = new LinkedList<String>();
 		
-		numOfAppTypes = SimSettings.getInstance().getTaskLookUpTable().length;
+		numOfAppTypes = SimSettings.getInstance().getNumOfTaskTypes();
+		numOfStatSlots = numOfAppTypes + 3;
 		
 		if (SimSettings.getInstance().getDeepFileLoggingEnabled()) {
 			try {
@@ -409,62 +494,62 @@ public class SimLogger {
 		}
 
 		// extract following values for each app type.
-		// last index is average of all app types
-		uncompletedTask = new int[numOfAppTypes + 1];
-		uncompletedTaskOnCloud = new int[numOfAppTypes + 1];
-		uncompletedTaskOnEdge = new int[numOfAppTypes + 1];
-		uncompletedTaskOnMobile = new int[numOfAppTypes + 1];
+		// ONAT: the last 3 indexes are aggregates - see getTotalIndex()/getApplicationsIndex()/getStreamsIndex()
+		uncompletedTask = new int[numOfStatSlots];
+		uncompletedTaskOnCloud = new int[numOfStatSlots];
+		uncompletedTaskOnEdge = new int[numOfStatSlots];
+		uncompletedTaskOnMobile = new int[numOfStatSlots];
 
-		completedTask = new int[numOfAppTypes + 1];
-		completedTaskOnCloud = new int[numOfAppTypes + 1];
-		completedTaskOnEdge = new int[numOfAppTypes + 1];
-		completedTaskOnMobile = new int[numOfAppTypes + 1];
+		completedTask = new int[numOfStatSlots];
+		completedTaskOnCloud = new int[numOfStatSlots];
+		completedTaskOnEdge = new int[numOfStatSlots];
+		completedTaskOnMobile = new int[numOfStatSlots];
 
-		failedTask = new int[numOfAppTypes + 1];
-		failedTaskOnCloud = new int[numOfAppTypes + 1];
-		failedTaskOnEdge = new int[numOfAppTypes + 1];
-		failedTaskOnMobile = new int[numOfAppTypes + 1];
+		failedTask = new int[numOfStatSlots];
+		failedTaskOnCloud = new int[numOfStatSlots];
+		failedTaskOnEdge = new int[numOfStatSlots];
+		failedTaskOnMobile = new int[numOfStatSlots];
 
-		networkDelay = new double[numOfAppTypes + 1];
-		gsmDelay = new double[numOfAppTypes + 1];
-		wanDelay = new double[numOfAppTypes + 1];
-		manDelay = new double[numOfAppTypes + 1];
-		lanDelay = new double[numOfAppTypes + 1];
-		uavDelay = new double[numOfAppTypes + 1];
+		networkDelay = new double[numOfStatSlots];
+		gsmDelay = new double[numOfStatSlots];
+		wanDelay = new double[numOfStatSlots];
+		manDelay = new double[numOfStatSlots];
+		lanDelay = new double[numOfStatSlots];
+		uavDelay = new double[numOfStatSlots];
 		
-		gsmUsage = new double[numOfAppTypes + 1];
-		wanUsage = new double[numOfAppTypes + 1];
-		manUsage = new double[numOfAppTypes + 1];
-		lanUsage = new double[numOfAppTypes + 1];
-		uavUsage = new double[numOfAppTypes + 1];
+		gsmUsage = new double[numOfStatSlots];
+		wanUsage = new double[numOfStatSlots];
+		manUsage = new double[numOfStatSlots];
+		lanUsage = new double[numOfStatSlots];
+		uavUsage = new double[numOfStatSlots];
 
-		serviceTime = new double[numOfAppTypes + 1];
-		serviceTimeOnCloud = new double[numOfAppTypes + 1];
-		serviceTimeOnEdge = new double[numOfAppTypes + 1];
-		serviceTimeOnMobile = new double[numOfAppTypes + 1];
+		serviceTime = new double[numOfStatSlots];
+		serviceTimeOnCloud = new double[numOfStatSlots];
+		serviceTimeOnEdge = new double[numOfStatSlots];
+		serviceTimeOnMobile = new double[numOfStatSlots];
 
-		processingTime = new double[numOfAppTypes + 1];
-		processingTimeOnCloud = new double[numOfAppTypes + 1];
-		processingTimeOnEdge = new double[numOfAppTypes + 1];
-		processingTimeOnMobile = new double[numOfAppTypes + 1];
+		processingTime = new double[numOfStatSlots];
+		processingTimeOnCloud = new double[numOfStatSlots];
+		processingTimeOnEdge = new double[numOfStatSlots];
+		processingTimeOnMobile = new double[numOfStatSlots];
 
-		failedTaskDueToVmCapacity = new int[numOfAppTypes + 1];
-		failedTaskDueToVmCapacityOnCloud = new int[numOfAppTypes + 1];
-		failedTaskDueToVmCapacityOnEdge = new int[numOfAppTypes + 1];
-		failedTaskDueToVmCapacityOnMobile = new int[numOfAppTypes + 1];
+		failedTaskDueToVmCapacity = new int[numOfStatSlots];
+		failedTaskDueToVmCapacityOnCloud = new int[numOfStatSlots];
+		failedTaskDueToVmCapacityOnEdge = new int[numOfStatSlots];
+		failedTaskDueToVmCapacityOnMobile = new int[numOfStatSlots];
 		
-		cost = new double[numOfAppTypes + 1];
-		QoE = new double[numOfAppTypes + 1];
-		failedTaskDuetoBw = new int[numOfAppTypes + 1];
-		failedTaskDuetoLanBw = new int[numOfAppTypes + 1];
-		failedTaskDuetoManBw = new int[numOfAppTypes + 1];
-		failedTaskDuetoWanBw = new int[numOfAppTypes + 1];
-		failedTaskDuetoGsmBw = new int[numOfAppTypes + 1];
-		failedTaskDuetoMobility = new int[numOfAppTypes + 1];
-		refectedTaskDuetoWlanRange = new int[numOfAppTypes + 1];
-		failedTaskDuetoTimeout = new int[numOfAppTypes + 1];
+		cost = new double[numOfStatSlots];
+		QoE = new double[numOfStatSlots];
+		failedTaskDuetoBw = new int[numOfStatSlots];
+		failedTaskDuetoLanBw = new int[numOfStatSlots];
+		failedTaskDuetoManBw = new int[numOfStatSlots];
+		failedTaskDuetoWanBw = new int[numOfStatSlots];
+		failedTaskDuetoGsmBw = new int[numOfStatSlots];
+		failedTaskDuetoMobility = new int[numOfStatSlots];
+		refectedTaskDuetoWlanRange = new int[numOfStatSlots];
+		failedTaskDuetoTimeout = new int[numOfStatSlots];
 
-		orchestratorOverhead = new double[numOfAppTypes + 1];
+		orchestratorOverhead = new double[numOfStatSlots];
 	}
 
 	/**
@@ -484,6 +569,26 @@ public class SimLogger {
 	public void addLog(int deviceId, int taskId, int taskType,
 			int taskLenght, int taskInputType, int taskOutputSize) {
 		taskMap.put(taskId, new LogItem(deviceId, taskType, taskLenght, taskInputType, taskOutputSize));
+	}
+
+	/**
+	 * ONAT: creates the log entry of a stream node - the application task a stream request
+	 * runs for one of its DAG nodes. It is logged like any other task (every later call such
+	 * as taskStarted()/setUploadDelay() works unchanged on nodeTaskId), but once it ends it is
+	 * not added to the statistics: its network delays are folded into the stream request's
+	 * own entry (see addLog() for streamId), a failure becomes the stream's failure, and the
+	 * StreamNodeListener is told. Success of the stream itself is up to the caller
+	 * (taskEnded(streamId)) since it depends on every other node too.
+	 *
+	 * @param streamId id of the stream request this node belongs to
+	 * @param nodeTaskId unique id of the node's own task
+	 * @param taskType application type index of the node's application
+	 */
+	public void addStreamNodeLog(int streamId, int deviceId, int nodeTaskId, int taskType,
+			int taskLenght, int taskInputType, int taskOutputSize) {
+		LogItem node = new LogItem(deviceId, taskType, taskLenght, taskInputType, taskOutputSize);
+		node.setStreamId(streamId);
+		taskMap.put(nodeTaskId, node);
 	}
 
 	/**
@@ -701,6 +806,20 @@ public class SimLogger {
 	}
 
 	/**
+	 * ONAT: Records one world event of the scenario (see events/WorldEvent) - written to the
+	 * _EVENTS.log file at the end of the simulation so the events can be drawn next to the
+	 * user and UAV positions (e.g. in the heat-map video). Call it once per event after
+	 * simStarted(); a scenario that never calls it gets no events file. Only records if file
+	 * logging is enabled.
+	 *
+	 * @param eventLogLine the event as one WorldEvent.toLogLine() line
+	 */
+	public void addEventLog(String eventLogLine) {
+		if(fileLogEnabled)
+			eventList.add(eventLogLine);
+	}
+
+	/**
 	 * Records access point network delay measurements over time.
 	 * 
 	 * <p>Logs upload and download delays for all access points to analyze
@@ -742,11 +861,11 @@ public class SimLogger {
 		FileWriter vmLoadFW = null, locationFW = null, userLocationFW = null, uavLocationFW = null, apUploadDelayFW = null, apDownloadDelayFW = null;
 		BufferedWriter vmLoadBW = null, locationBW = null, userLocationBW = null, uavLocationBW = null, apUploadDelayBW = null, apDownloadDelayBW = null;
 
-		// Save generic results to file for each app type. last index is average
-		// of all app types
-		File[] genericFiles = new File[numOfAppTypes + 1];
-		FileWriter[] genericFWs = new FileWriter[numOfAppTypes + 1];
-		BufferedWriter[] genericBWs = new BufferedWriter[numOfAppTypes + 1];
+		// Save generic results to file for each app type (every application, then every
+		// stream) plus the applications and streams aggregates - see getGenericFileLabel()
+		File[] genericFiles = new File[numOfStatSlots];
+		FileWriter[] genericFWs = new FileWriter[numOfStatSlots];
+		BufferedWriter[] genericBWs = new BufferedWriter[numOfStatSlots];
 
 		// open all files and prepare them for write
 		if (fileLogEnabled) {
@@ -774,18 +893,14 @@ public class SimLogger {
 			apDownloadDelayFW = new FileWriter(apDownloadDelayFile, true);
 			apDownloadDelayBW = new BufferedWriter(apDownloadDelayFW);
 
-			for (int i = 0; i < numOfAppTypes + 1; i++) {
-				String fileName = "ALL_APPS_GENERIC.log";
+			for (int i = 0; i < numOfStatSlots; i++) {
+				// ONAT: slots without a file (an unused app/stream, the all-requests total)
+				// are discarded
+				String fileLabel = getGenericFileLabel(i);
+				if (fileLabel == null)
+					continue;
 
-				if (i < numOfAppTypes) {
-					// if related app is not used in this simulation, just discard it
-					if (SimSettings.getInstance().getTaskLookUpTable()[i][0] == 0)
-						continue;
-
-					fileName = SimSettings.getInstance().getTaskName(i) + "_GENERIC.log";
-				}
-
-				genericFiles[i] = new File(outputFolder, filePrefix + "_" + fileName);
+				genericFiles[i] = new File(outputFolder, filePrefix + "_" + fileLabel + "_GENERIC.log");
 				genericFWs[i] = new FileWriter(genericFiles[i], true);
 				genericBWs[i] = new BufferedWriter(genericFWs[i]);
 				appendToFile(genericBWs[i], "#auto generated file!");
@@ -803,6 +918,10 @@ public class SimLogger {
 		for (Map.Entry<Integer, LogItem> entry : taskMap.entrySet()) {
 			LogItem value = entry.getValue();
 
+			// ONAT: a stream node still running is part of its (counted) stream request
+			if (value.isStreamNode())
+				continue;
+
 			uncompletedTask[value.getTaskType()]++;
 			if (value.getVmType() == SimSettings.VM_TYPES.CLOUD_VM.ordinal())
 				uncompletedTaskOnCloud[value.getTaskType()]++;
@@ -812,62 +931,62 @@ public class SimLogger {
 				uncompletedTaskOnEdge[value.getTaskType()]++;
 		}
 
-		// calculate total values
-		uncompletedTask[numOfAppTypes] = IntStream.of(uncompletedTask).sum();
-		uncompletedTaskOnCloud[numOfAppTypes] = IntStream.of(uncompletedTaskOnCloud).sum();
-		uncompletedTaskOnEdge[numOfAppTypes] = IntStream.of(uncompletedTaskOnEdge).sum();
-		uncompletedTaskOnMobile[numOfAppTypes] = IntStream.of(uncompletedTaskOnMobile).sum();
+		// calculate total values (ONAT: and the applications-only / streams-only aggregates)
+		fillAggregates(uncompletedTask);
+		fillAggregates(uncompletedTaskOnCloud);
+		fillAggregates(uncompletedTaskOnEdge);
+		fillAggregates(uncompletedTaskOnMobile);
 
-		completedTask[numOfAppTypes] = IntStream.of(completedTask).sum();
-		completedTaskOnCloud[numOfAppTypes] = IntStream.of(completedTaskOnCloud).sum();
-		completedTaskOnEdge[numOfAppTypes] = IntStream.of(completedTaskOnEdge).sum();
-		completedTaskOnMobile[numOfAppTypes] = IntStream.of(completedTaskOnMobile).sum();
+		fillAggregates(completedTask);
+		fillAggregates(completedTaskOnCloud);
+		fillAggregates(completedTaskOnEdge);
+		fillAggregates(completedTaskOnMobile);
 
-		failedTask[numOfAppTypes] = IntStream.of(failedTask).sum();
-		failedTaskOnCloud[numOfAppTypes] = IntStream.of(failedTaskOnCloud).sum();
-		failedTaskOnEdge[numOfAppTypes] = IntStream.of(failedTaskOnEdge).sum();
-		failedTaskOnMobile[numOfAppTypes] = IntStream.of(failedTaskOnMobile).sum();
+		fillAggregates(failedTask);
+		fillAggregates(failedTaskOnCloud);
+		fillAggregates(failedTaskOnEdge);
+		fillAggregates(failedTaskOnMobile);
 
-		networkDelay[numOfAppTypes] = DoubleStream.of(networkDelay).sum();
-		lanDelay[numOfAppTypes] = DoubleStream.of(lanDelay).sum();
-		manDelay[numOfAppTypes] = DoubleStream.of(manDelay).sum();
-		wanDelay[numOfAppTypes] = DoubleStream.of(wanDelay).sum();
-		gsmDelay[numOfAppTypes] = DoubleStream.of(gsmDelay).sum();
-		uavDelay[numOfAppTypes] = DoubleStream.of(uavDelay).sum();
+		fillAggregates(networkDelay);
+		fillAggregates(lanDelay);
+		fillAggregates(manDelay);
+		fillAggregates(wanDelay);
+		fillAggregates(gsmDelay);
+		fillAggregates(uavDelay);
 		
-		lanUsage[numOfAppTypes] = DoubleStream.of(lanUsage).sum();
-		manUsage[numOfAppTypes] = DoubleStream.of(manUsage).sum();
-		wanUsage[numOfAppTypes] = DoubleStream.of(wanUsage).sum();
-		gsmUsage[numOfAppTypes] = DoubleStream.of(gsmUsage).sum();
-		uavUsage[numOfAppTypes] = DoubleStream.of(uavUsage).sum();
+		fillAggregates(lanUsage);
+		fillAggregates(manUsage);
+		fillAggregates(wanUsage);
+		fillAggregates(gsmUsage);
+		fillAggregates(uavUsage);
 
-		serviceTime[numOfAppTypes] = DoubleStream.of(serviceTime).sum();
-		serviceTimeOnCloud[numOfAppTypes] = DoubleStream.of(serviceTimeOnCloud).sum();
-		serviceTimeOnEdge[numOfAppTypes] = DoubleStream.of(serviceTimeOnEdge).sum();
-		serviceTimeOnMobile[numOfAppTypes] = DoubleStream.of(serviceTimeOnMobile).sum();
+		fillAggregates(serviceTime);
+		fillAggregates(serviceTimeOnCloud);
+		fillAggregates(serviceTimeOnEdge);
+		fillAggregates(serviceTimeOnMobile);
 
-		processingTime[numOfAppTypes] = DoubleStream.of(processingTime).sum();
-		processingTimeOnCloud[numOfAppTypes] = DoubleStream.of(processingTimeOnCloud).sum();
-		processingTimeOnEdge[numOfAppTypes] = DoubleStream.of(processingTimeOnEdge).sum();
-		processingTimeOnMobile[numOfAppTypes] = DoubleStream.of(processingTimeOnMobile).sum();
+		fillAggregates(processingTime);
+		fillAggregates(processingTimeOnCloud);
+		fillAggregates(processingTimeOnEdge);
+		fillAggregates(processingTimeOnMobile);
 
-		failedTaskDueToVmCapacity[numOfAppTypes] = IntStream.of(failedTaskDueToVmCapacity).sum();
-		failedTaskDueToVmCapacityOnCloud[numOfAppTypes] = IntStream.of(failedTaskDueToVmCapacityOnCloud).sum();
-		failedTaskDueToVmCapacityOnEdge[numOfAppTypes] = IntStream.of(failedTaskDueToVmCapacityOnEdge).sum();
-		failedTaskDueToVmCapacityOnMobile[numOfAppTypes] = IntStream.of(failedTaskDueToVmCapacityOnMobile).sum();
+		fillAggregates(failedTaskDueToVmCapacity);
+		fillAggregates(failedTaskDueToVmCapacityOnCloud);
+		fillAggregates(failedTaskDueToVmCapacityOnEdge);
+		fillAggregates(failedTaskDueToVmCapacityOnMobile);
 		
-		cost[numOfAppTypes] = DoubleStream.of(cost).sum();
-		QoE[numOfAppTypes] = DoubleStream.of(QoE).sum();
-		failedTaskDuetoBw[numOfAppTypes] = IntStream.of(failedTaskDuetoBw).sum();
-		failedTaskDuetoGsmBw[numOfAppTypes] = IntStream.of(failedTaskDuetoGsmBw).sum();
-		failedTaskDuetoWanBw[numOfAppTypes] = IntStream.of(failedTaskDuetoWanBw).sum();
-		failedTaskDuetoManBw[numOfAppTypes] = IntStream.of(failedTaskDuetoManBw).sum();
-		failedTaskDuetoLanBw[numOfAppTypes] = IntStream.of(failedTaskDuetoLanBw).sum();
-		failedTaskDuetoMobility[numOfAppTypes] = IntStream.of(failedTaskDuetoMobility).sum();
-		refectedTaskDuetoWlanRange[numOfAppTypes] = IntStream.of(refectedTaskDuetoWlanRange).sum();
-		failedTaskDuetoTimeout[numOfAppTypes] = IntStream.of(failedTaskDuetoTimeout).sum();
+		fillAggregates(cost);
+		fillAggregates(QoE);
+		fillAggregates(failedTaskDuetoBw);
+		fillAggregates(failedTaskDuetoGsmBw);
+		fillAggregates(failedTaskDuetoWanBw);
+		fillAggregates(failedTaskDuetoManBw);
+		fillAggregates(failedTaskDuetoLanBw);
+		fillAggregates(failedTaskDuetoMobility);
+		fillAggregates(refectedTaskDuetoWlanRange);
+		fillAggregates(failedTaskDuetoTimeout);
 
-		orchestratorOverhead[numOfAppTypes] = DoubleStream.of(orchestratorOverhead).sum();
+		fillAggregates(orchestratorOverhead);
 		
 		// calculate server load
 		double totalVmLoadOnEdge = 0;
@@ -928,6 +1047,16 @@ public class SimLogger {
 			for (String entry : uavLocationList)
 				appendToFile(uavLocationBW, entry);
 
+			// ONAT: write the world events (tutorial19) - only for scenarios that have any
+			if (!eventList.isEmpty()) {
+				File eventFile = new File(outputFolder, filePrefix + "_EVENTS.log");
+				try (BufferedWriter eventBW = new BufferedWriter(new FileWriter(eventFile, true))) {
+					appendToFile(eventBW, "#auto generated file!");
+					for (String entry : eventList)
+						appendToFile(eventBW, entry);
+				}
+			}
+
 			// write delay info to file for each access point
 			if(SimSettings.getInstance().getApDelayLogInterval() != 0) {
 				for (ApDelayLogItem entry : apDelayList) {
@@ -936,13 +1065,11 @@ public class SimLogger {
 				}
 			}
 
-			for (int i = 0; i < numOfAppTypes + 1; i++) {
+			for (int i = 0; i < numOfStatSlots; i++) {
 
-				if (i < numOfAppTypes) {
-					// if related app is not used in this simulation, just discard it
-					if (SimSettings.getInstance().getTaskLookUpTable()[i][0] == 0)
-						continue;
-				}
+				// ONAT: no file for an unused app/stream, nor for the all-requests total
+				if (getGenericFileLabel(i) == null)
+					continue;
 
 				// check if the divisor is zero in order to avoid division by
 				// zero problem
@@ -1051,8 +1178,8 @@ public class SimLogger {
 				appendToFile(genericBWs[i], genericResult4);
 				appendToFile(genericBWs[i], genericResult5);
 				
-				//append performance related values only to ALL_ALLPS file
-				if(i == numOfAppTypes) {
+				//append performance related values only to the aggregate files (ALL_APPS, ALL_STREAMS)
+				if(i >= numOfAppTypes) {
 					appendToFile(genericBWs[i], genericResult6);
 				}
 				else {
@@ -1087,14 +1214,9 @@ public class SimLogger {
 			uavLocationBW.close();
 			apUploadDelayBW.close();
 			apDownloadDelayBW.close();
-			for (int i = 0; i < numOfAppTypes + 1; i++) {
-				if (i < numOfAppTypes) {
-					// if related app is not used in this simulation, just
-					// discard it
-					if (SimSettings.getInstance().getTaskLookUpTable()[i][0] == 0)
-						continue;
-				}
-				genericBWs[i].close();
+			for (int i = 0; i < numOfStatSlots; i++) {
+				if (genericBWs[i] != null)
+					genericBWs[i].close();
 			}
 			
 		}
@@ -1192,8 +1314,47 @@ public class SimLogger {
 		taskMap.clear();
 		vmLoadList.clear();
 		apDelayList.clear();
+		eventList.clear();
 	}
 	
+	/**
+	 * ONAT: the stream's timeout fired while some of its nodes were still running: from now on
+	 * the failure of one of them must NOT become the stream's outcome (see endStreamNode()) -
+	 * the caller logs the stream with timedOut() once those nodes have all ended.
+	 */
+	public void markStreamTimeoutPending(int streamId) {
+		LogItem stream = taskMap.get(streamId);
+		if (stream != null)
+			stream.setTimeoutPending();
+	}
+
+	/**
+	 * ONAT: a stream node ended (see addStreamNodeLog()): folds its network delays into the
+	 * stream request's own entry and, if the node failed, makes that failure the stream's
+	 * outcome (the stream cannot go on without the node) - then tells the listener. A stream
+	 * request that is already resolved on its own is left alone: the node just ran to its end.
+	 * One whose timeout is pending (see markStreamTimeoutPending()) only gets the delays - its
+	 * outcome is the timeout, logged by the caller.
+	 */
+	private void endStreamNode(int nodeTaskId, LogItem node) {
+		int streamId = node.getStreamId();
+		LogItem stream = taskMap.get(streamId);
+		boolean failed = node.getStatus() != TASK_STATUS.COMLETED;
+		boolean decidesStream = failed && stream != null && !stream.isTimeoutPending();
+
+		if (stream != null) {
+			stream.addNetworkDelaysOf(node);
+			if (decidesStream)
+				stream.adoptFailureOf(node);
+		}
+
+		if (streamNodeListener != null)
+			streamNodeListener.onStreamNodeEnded(streamId, nodeTaskId, node.getStatus());
+
+		if (decidesStream)
+			recordLog(streamId);
+	}
+
 	/**
 	 * Processes and aggregates completed task metrics into summary statistics.
 	 * 
@@ -1218,6 +1379,12 @@ public class SimLogger {
 	 */
 	private void recordLog(int taskId){
 		LogItem value = taskMap.remove(taskId);
+
+		// ONAT: a stream node is not a task of its own in the statistics, see addStreamNodeLog()
+		if (value.isStreamNode()) {
+			endStreamNode(taskId, value);
+			return;
+		}
 		
 		// Skip tasks from warm-up period to ensure steady-state statistics
 		if (value.isInWarmUpPeriod())
@@ -1496,6 +1663,10 @@ class LogItem {
 	
 	/** Application type index of this task */
 	private int taskType;
+
+	/** ONAT: id of the stream request this item is a node of, or NO_STREAM for every other task */
+	private static final int NO_STREAM = -1;
+	private int streamId = NO_STREAM;
 	
 	/** Computational length requirement in million instructions */
 	private int taskLenght;
@@ -1576,6 +1747,53 @@ class LogItem {
 	 * multiple consecutive layer pairs over its lifetime - see NetworkModel.getInterLayerDelay(). */
 	public void addUavDelay(double delay) {
 		uavDelay += delay;
+	}
+
+	public void setStreamId(int _streamId) {
+		streamId = _streamId;
+	}
+
+	public int getStreamId() {
+		return streamId;
+	}
+
+	/** True for the item of a stream node (see SimLogger.addStreamNodeLog()) */
+	public boolean isStreamNode() {
+		return streamId != NO_STREAM;
+	}
+
+	/** ONAT: this (stream request's) item's timeout fired while nodes were still running, see
+	 * SimLogger.markStreamTimeoutPending(). */
+	private boolean timeoutPending = false;
+
+	public void setTimeoutPending() {
+		timeoutPending = true;
+	}
+
+	public boolean isTimeoutPending() {
+		return timeoutPending;
+	}
+
+	/** ONAT: adds a finished stream node's network delays to this (stream request's) item -
+	 * accumulated, since a stream has many nodes. */
+	public void addNetworkDelaysOf(LogItem node) {
+		lanUploadDelay += node.lanUploadDelay;
+		manUploadDelay += node.manUploadDelay;
+		wanUploadDelay += node.wanUploadDelay;
+		gsmUploadDelay += node.gsmUploadDelay;
+		lanDownloadDelay += node.lanDownloadDelay;
+		manDownloadDelay += node.manDownloadDelay;
+		wanDownloadDelay += node.wanDownloadDelay;
+		gsmDownloadDelay += node.gsmDownloadDelay;
+		uavDelay += node.uavDelay;
+	}
+
+	/** ONAT: makes a failed stream node's failure this (stream request's) own outcome. The VM
+	 * tier stays the stream's own, like a partitioned task's parent. */
+	public void adoptFailureOf(LogItem node) {
+		status = node.status;
+		networkError = node.networkError;
+		taskEndTime = node.taskEndTime;
 	}
 	
 	public void taskAssigned(int _datacenterId, int _hostId, int _vmId, int _vmType) {

@@ -1,0 +1,117 @@
+<?xml version="1.0"?>
+<events>
+	<!-- ONAT: the world events of tutorial19, listed one by one - nothing here is random. While an
+	     event is active (start_time to end_time, simulation seconds), the users within `radius`
+	     meters of (x_pos, y_pos) send the event's `request` - the name of an application of
+	     applications.xml or of a stream of streams.xml - every `poisson_interarrival` seconds on
+	     average each (see default_config.properties' event_requests_only). With event_gather, the
+	     users within `attraction_radius` of the center when the event starts walk to it, each
+	     with probability `participation`, and walk back home when it ends.
+	       mandatory: start_time end_time x_pos y_pos radius request poisson_interarrival
+	       optional : attraction_radius (default: radius) participation (default: 1)
+	     The events are laid out to make service-aware UAV mobility matter, on the 1000 x 1000 m
+	     map with 16 UAVs starting in its four quadrant centers (SINGLE service placement: 4 UAVs of
+	     each of the 4 services in total):
+	       - every event wants a DIFFERENT set of services (an application needs one, a stream two
+	         to four at the same time), so where the crowd is says little about which UAVs are
+	         needed there;
+	       - events overlap in time and are far apart, so the same UAV cannot serve two of them and
+	         the UAVs of a service have to split up between the events asking for it;
+	       - events move across the map over time, so UAVs have to come and go; the first one
+	         starts 200 s in (after the 180 s warm-up), so the UAVs' first reaction is measured;
+	       - each event draws its crowd from far away (attraction_radius 450 m) but only the part
+	         standing within 100 m of its center - where one UAV covers all of it - requests.
+	     To add an event, copy one and change its values; an unknown request name, a missing or
+	     unknown tag or a center outside the map stops the simulation with a message. -->
+
+	<!-- application VIDEO_APP (service 0) -->
+	<event name="CONCERT">
+		<start_time>200</start_time>
+		<end_time>650</end_time>
+		<x_pos>200</x_pos>
+		<y_pos>800</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>30</poisson_interarrival>
+	</event>
+
+	<!-- stream FIRE_STREAM: DETECT -> (MAP, ALERT) = services 2, 1, 3 -->
+	<event name="WILDFIRE">
+		<start_time>250</start_time>
+		<end_time>700</end_time>
+		<x_pos>800</x_pos>
+		<y_pos>800</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>FIRE_STREAM</request>
+		<poisson_interarrival>80</poisson_interarrival>
+	</event>
+
+	<!-- stream TRAFFIC_STREAM: MAP -> ALERT = services 1, 3 -->
+	<event name="ACCIDENT">
+		<start_time>550</start_time>
+		<end_time>1000</end_time>
+		<x_pos>800</x_pos>
+		<y_pos>250</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>TRAFFIC_STREAM</request>
+		<poisson_interarrival>60</poisson_interarrival>
+	</event>
+
+	<!-- stream BROADCAST_STREAM: (VIDEO, ALERT) = services 0, 3 -->
+	<event name="MATCH">
+		<start_time>750</start_time>
+		<end_time>1200</end_time>
+		<x_pos>250</x_pos>
+		<y_pos>250</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>BROADCAST_STREAM</request>
+		<poisson_interarrival>60</poisson_interarrival>
+	</event>
+
+	<!-- application DETECT_APP (service 2) -->
+	<event name="FLOOD">
+		<start_time>900</start_time>
+		<end_time>1350</end_time>
+		<x_pos>500</x_pos>
+		<y_pos>500</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>DETECT_APP</request>
+		<poisson_interarrival>30</poisson_interarrival>
+	</event>
+
+	<!-- application MAP_APP (service 1) -->
+	<event name="PARADE">
+		<start_time>1100</start_time>
+		<end_time>1550</end_time>
+		<x_pos>800</x_pos>
+		<y_pos>250</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>MAP_APP</request>
+		<poisson_interarrival>30</poisson_interarrival>
+	</event>
+
+	<!-- stream RESCUE_STREAM: DETECT -> (MAP, VIDEO) -> ALERT = services 2, 1, 0, 3 -->
+	<event name="STORM">
+		<start_time>1300</start_time>
+		<end_time>1800</end_time>
+		<x_pos>250</x_pos>
+		<y_pos>750</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.5</participation>
+		<request>RESCUE_STREAM</request>
+		<poisson_interarrival>80</poisson_interarrival>
+	</event>
+</events>

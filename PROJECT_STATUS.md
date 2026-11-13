@@ -24,6 +24,21 @@ CloudSim) extended with:
   (uploading/processing/downloading) `task_timeout` seconds after its own creation gets
   ONE `TASK_STATUS.TIMED_OUT` outcome logged, but keeps running to completion unaffected
   - it is NOT cancelled. Disabled by default (`task_timeout<=0`). See §6.9.
+- **Streams** (tutorial18+): a request can be a *stream* (`streams.xml`) instead of a plain
+  application - a DAG (`dag_layers`, e.g. `1,2,1`) whose nodes are **applications/services**
+  instead of sub-tasks. Layer L starts once every node of layer L-1 has completed - and, like a
+  DAG application's layers, after the finished layer's output has been relayed between UAVs
+  (§6.3c) - the nodes of a layer run in parallel, each node is offloaded to a UAV hosting its
+  service (or dropped, which fails the whole stream). A stream has its OWN `usage_percentage`/active/idle/
+  `poisson_interarrival`/`task_timeout`; the applications it runs ignore theirs while they are
+  its nodes. An application can still be requested on its own, and can itself be a DAG of
+  sub-tasks. See §6.11.
+- **Service-aware UAV mobility & world events** (tutorial19+): three more centralized UAV
+  policies (`SERVICE_KMEANS`, `SERVICE_APF`, `SERVICE_CAPACITY_FILL`, the service-aware
+  counterparts of `PRIORITY_KMEANS`/`APF`/`CAPACITY_FILL`) move every UAV towards the requests
+  for the services IT hosts instead of towards users in general, and **world events** listed one by one in an `events.xml`
+  (`events/WorldEvent`: a place, a time window and a request) make crowds gather and request one
+  thing, so such requests - and the UAVs that serve them - move across the map. See §6.12.
 - **tutorial8's SAR scenario**: a second, independent population of mobile devices
   (Search & Rescue team members) sharing the world with normal users.
 - A progression of tutorials (`tutorial1`..`tutorial8`) and older `sample_app1`..`sample_app5`
@@ -74,7 +89,7 @@ flowchart TB
 |---|---|
 | `ScenarioFactory` (interface) | The extension seam. One method per pluggable component. **Every scenario implements this.** Has one `default` method (`getEdgeMobilityModel()` → `DefaultUAVMobility`, i.e. static/non-mobile edge servers) so old scenarios that predate UAVs still compile. |
 | `SimManager` | Singleton `SimEntity`. Owns all component instances, drives the CloudSim event loop (`CREATE_TASK`, `CHECK_ALL_VM`, `GET_LOAD_LOG`, `PRINT_PROGRESS`, `STOP_SIMULATION`, `GET_UAV_LOCATION_LOG`), starts/stops datacenters, and is the global lookup (`SimManager.getInstance()....`) used everywhere else instead of dependency injection. |
-| `SimSettings` | Singleton config loader/holder. Parses the `.properties` file, `edge_devices.xml`, `applications.xml` into typed getters. **Any new config knob goes here first** (comment in the file literally says so). Also owns constant IDs (`CLOUD_DATACENTER_ID`, `GENERIC_EDGE_DEVICE_ID`, ...) and the `VM_TYPES`/`NETWORK_DELAY_TYPES` enums. |
+| `SimSettings` | Singleton config loader/holder. Parses the `.properties` file, `edge_devices.xml`, `applications.xml` (and, via the 4-argument `initialize(...)` overload, an optional `streams.xml` - tutorial18+; the 3-argument form every older tutorial calls means "no streams") into typed getters. **Any new config knob goes here first** (comment in the file literally says so). Also owns constant IDs (`CLOUD_DATACENTER_ID`, `GENERIC_EDGE_DEVICE_ID`, ...) and the `VM_TYPES`/`NETWORK_DELAY_TYPES` enums. |
 | `CloudletSchedulerSpaceShared_Custom` | The per-VM cloudlet scheduler every edge/cloud/mobile VM is created with (CloudSim's `CloudletSchedulerSpaceShared` + a floor on the submit-time finish estimate so very short tasks can't get stuck in the exec list - see §7). Use it for any new VM-creating manager. |
 
 ### `mobility/` — device movement
@@ -85,6 +100,9 @@ flowchart TB
 | `mobility/uav/UAVMobilityModel` (abstract `SimEntity`) | Base for **edge-server (UAV) movement**. Event-driven (`SimSettings.EDGE_SERVER_MOVE` tag) rather than pure `getLocation()` lookup — moves are scheduled and applied to `UAV.setPlace()`. |
 | `mobility/uav/DefaultUAVMobility` | No-op implementation — makes edge servers static. Returned by `ScenarioFactory.getEdgeMobilityModel()`'s default method, so it's what every pre-UAV tutorial (1–5) effectively gets. |
 | `mobility/uav/BasicUAVMobility` | The real UAV policy engine. Constructor takes a policy name string; `processMoveEvent` first checks `isVoronoiPolicy(uavMobilityOption)` (true for `"VORONOI"` or any `"VORONOI_<factor>"` variant - see §6.2/§6.5) and otherwise falls through to a `switch`: `NO`, `RANDOM`, `LOCAL` (chase centroid of *active* users in `SERVICE_RADIUS`), `LOCAL_FORCE` (LOCAL + inverse-square repulsion from other UAVs so they spread out, tuned by private `COORDINATION_RADIUS`/`REPULSION_GAIN`), `ASSIGNED_LOCAL` (fixed round-robin user→UAV assignment, chases assigned group's centroid regardless of range), `GLOBAL` (declared, currently a no-op). The VORONOI branch: each UAV partitions only *active* users within its own `SERVICE_RADIUS` by nearest-UAV, considering only competing UAVs close enough to possibly be nearer (bounded by `2 * SERVICE_RADIUS`, via the triangle inequality - see `VoronoiPartitioner.recalculate`), then chases its own cell's centroid, weighted by each user's `MobilityModel.getPriority(...)` so e.g. SAR members can pull the centroid harder than normal users without affecting the nearest-UAV partition itself. A device outside every UAV's `SERVICE_RADIUS` is left unclaimed (nobody's cell) rather than handed to whichever UAV is globally nearest - every decentralized policy's decision is provably a function of purely local information only, never full-scenario state. All of `LOCAL`/`LOCAL_FORCE`/VORONOI/`ASSIGNED_LOCAL` skip devices where `MobilityModel.isActive(deviceId, time)` is false, so a staged population (e.g. SAR members before `sar_entry_time`) can't trap/skew a UAV. Caches `allUavs` once in `startEntity()`. Only tutorial8 sweeps `LOCAL_FORCE`/`VORONOI` (`NO`/`RANDOM` too, plus `VORONOI_2`/`VORONOI_4` in tutorial9); `LOCAL`/`ASSIGNED_LOCAL` remain available in the shared switch (tutorial6/7 still use them) but were dropped from tutorial8/9's `uav_mobility_options`/plotting config. |
+| `mobility/uav/CentralizedUAVMobility` | The centralized UAV controller (tutorial12+): one `SimEntity` that, every `centralized_controller_interval` seconds, picks a target per UAV with the configured policy (`PRIORITY_KMEANS`, `APF`, `CAPACITY_FILL`, `ADAPTIVE_KMEANS`, and from tutorial19 the service-aware `SERVICE_KMEANS`/`SERVICE_APF`/`SERVICE_CAPACITY_FILL`; `isSupportedPolicy()` lists them for `MainApp` validation) and moves it towards it at its max speed. The service-aware cases delegate to `ServiceAwareUavPolicies` (`runServiceAwarePolicy`), feeding it the demand from a `ServiceDemandTracker` and which UAV hosts which service (`uavHostsService[][]`, from `UAV.canServeTaskType`). See §6.12. |
+| `mobility/uav/ServiceDemandTracker` | (tutorial19+) A sorted index of the pre-generated `LoadGeneratorModel.getTaskList()`: `snapshot(now, window, lookahead, mobilityModel)` returns the demand a service-aware policy reacts to - one entry per request made in `[now - service_demand_window, now + service_demand_lookahead]`, positioned at its device's position NOW and weighted by `MobilityModel.getPriority`, tagged with the service slot it needs (a stream request yields one entry per node service). |
+| `mobility/uav/ServiceAwareUavPolicies` | (tutorial19+) The three target-selection algorithms (`serviceKMeans`, `serviceApf`, `serviceCapacityFill`), pure functions of (UAV positions, who hosts what, demand) returning a target per UAV (`null` = hold). See §6.12. |
 | Application-level mobility models (not in `mobility/`, live under `applications/tutorialN/`) | e.g. `tutorial6.ConvergingMobilityModel` (crowd converges onto 3 hardcoded meeting areas, `ROUND_ROBIN`/`CLOSEST` assignment), `tutorial8.SARTeamMobilityModel` (fixed teams, staged entry, MOVE/STOP cycling, formation offsets), `tutorial8.CombinedMobilityModel` (delegates a `deviceId` range to one sub-model each — the pattern to copy for any "second population"). |
 
 
@@ -93,7 +111,14 @@ flowchart TB
 |---|---|
 | `LoadGeneratorModel` (abstract) | Pre-computes the **entire** task timeline before the sim starts (`initializeModel()` → `taskList: List<TaskProperty>`), plus `getTaskTypeOfDevice(deviceId)`. |
 | `IdleActiveLoadGenerator` | Default: assigns each device one task type (weighted by `usage_percentage`), alternates active (Poisson task arrivals) / idle periods per `applications.xml`. |
+| `task_generator/IdleActiveStreamLoadGenerator` | (tutorial18+) `IdleActiveLoadGenerator` for scenarios that also define **streams** (§6.11): every device is assigned ONE request type - an application or a stream - by drawing from the applications' and the streams' `usage_percentage` together (they must add up to 100, else the sim exits with a clear message), then alternates active/idle using THAT type's own `poisson_interarrival`/`active_period`/`idle_period`. A stream request is a `utils/StreamTaskProperty` carrying one pre-sampled `TaskProperty` per node (sampled exactly like a standalone request of the node's app, so an app that is only a stream node - `usage_percentage` 0 - still gets its size/length distributions). With no streams defined it behaves like `IdleActiveLoadGenerator`. Its steps are `protected` hooks (`getSampledApplications`, `createDistributions`, `createStreamRequest`, the `expRngList` field) so a subclass can reuse the request sampling: tutorial19's `EventLoadGenerator` builds event-driven request lists with them (§6.12). |
 | `applications/tutorial8/SARAwareLoadGenerator` | Pattern for **population-aware** generation: splits `applications.xml` app indices into disjoint subsets per population (normal vs SAR), normalizes `usage_percentage` independently within each subset, and delays SAR task generation until `sar_entry_time`. Copy this pattern for any new device population with its own app catalogue. |
+
+### `events/` — world events (tutorial19+)
+| Class | Role |
+|---|---|
+| `events/WorldEvent` | Immutable description of a **world event** - something that happens at a place for a while and makes the people around it request one thing: `name`, `start`/`end` (simulation seconds), a center (`x`,`y`), `radius` (users request only while within it), `attractionRadius` (users within it when the event starts may be drawn to it), `participation` (probability of such a user being drawn), and the request - an application or stream NAME (resolved to a task type with `SimSettings.getTaskTypeByName`) and its `requestInterarrival` (mean seconds between one user's requests while inside). Validates its arguments (unknown request name, `end <= start`, radii, ...) with a clear message; `toLogLine(index)` is the `EVENTS.log` row. Events are plain data: the scenario's `events.xml` (read by `WorldEventLoader`) decides which exist, and its mobility model and load generator act on them - see §6.12. |
+| `events/WorldEventLoader` | (tutorial19+) `load(path)` reads an `events.xml` - one `<event name="...">` per event that will happen, each with `start_time`, `end_time`, `x_pos`, `y_pos`, `radius`, `request`, `poisson_interarrival` and the optional `attraction_radius` (default: `radius`) and `participation` (default 1) - into `WorldEvent`s, in file order. Nothing about the events is random. Strict on purpose: a missing/unknown/repeated tag, a non-number, an unknown request name, a repeated or empty event name, a center outside the `*_bound` area or an empty file throws an `IllegalArgumentException` naming the event (`MainApp` prints it and stops), so a typo cannot silently change an experiment. Must run after `SimSettings.initialize` (requests are resolved against `applications.xml`/`streams.xml`). |
 
 ### `network/` — delay modeling
 | Class | Role |
@@ -107,7 +132,7 @@ flowchart TB
 |---|---|
 | `EdgeOrchestrator` (abstract `SimEntity`) | `initialize()`, `getDeviceToOffload(Task)` (cloud vs edge vs mobile, returns a device-type constant), `getVmToOffload(Task, deviceId)` (pick one VM), and `getVmsToOffload(List<Task>, deviceId)` (**batch** selection for sibling sub-tasks of a partitioned task — default impl just loops `getVmToOffload`; override this if your placement needs to see the whole batch's cumulative load before committing, as `UAVEdgeOrchestrator` does). |
 | `BasicEdgeOrchestrator` | Implements `FIRST_FIT`/`NEXT_FIT`/`BEST_FIT`/`WORST_FIT`/`RANDOM_FIT` VM selection, location-aware (`selectVmOnHost`) or global-load-balanced (`selectVmOnLoadBalancer`, only in `TWO_TIER_WITH_EO` scenario) placement on the edge tier, worst-fit-by-capacity on cloud. Policy name comes from `orchestrator_policies` config and is read via `this.policy`. |
-| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location**. Overrides `getVmsToOffload` to reserve predicted load per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
+| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10). Overrides `getVmsToOffload` to reserve predicted load per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
 
 ### `edge_server/` — edge (and UAV) infrastructure
 | Class | Role |
@@ -117,7 +142,8 @@ flowchart TB
 | `EdgeHost` | CloudSim `Host` subclass + a `Location`. |
 | `EdgeVM` | CloudSim `Vm` subclass carrying its `VM_TYPES` tag. |
 | `EdgeVmAllocationPolicy_Custom` | VM→host allocation policy for edge datacenters. |
-| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors. **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
+| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors, and `canServeTaskType(serviceIndex)` (tutorial17+ — true when unrestricted, i.e. neither `edge_devices.xml` (`service_capability` tag) nor a placement policy gave this host a capability list, or when `serviceIndex` is in that host's list; see §6.10). A second constructor takes the capability list explicitly (tutorial17's `SampleEdgeServerManager` passes it the `ServicePlacementPolicy` result); the original constructor still reads it from `edge_devices.xml`. **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
+| `edge_server/uav/ServicePlacementPolicy` | (tutorial17+) Decides which services (distinct `applications.xml` `service_index` values) every UAV hosts, from a policy name (`service_placement_policies` in `default_config.properties`). `place(numOfUAVs)` returns, per UAV id, its `service_index` list. Policies are a `switch` on the name, like the UAV mobility options: `SINGLE` (one service per UAV, spread as evenly as possible, UAV `i` hosts service `i % #services` — round-robin rather than contiguous blocks, since consecutive UAV ids share a datacenter/start area) and `ALL` (every UAV hosts every service). Reads the services from `SimSettings`, so per-service attributes added to `applications.xml` later (priority, size, popularity) can feed new policies without changing callers. See §6.10. |
 
 ### `cloud_server/` — cloud infrastructure (mirrors `edge_server/`)
 `CloudServerManager` (abstract) → `DefaultCloudServerManager` (XML-driven, single `localDatacenter`), `CloudVM`, `CloudVmAllocationPolicy_Custom`.
@@ -127,6 +153,7 @@ flowchart TB
 |---|---|
 | `MobileDeviceManager` (abstract, extends CloudSim `DatacenterBroker`) | `submitTask(TaskProperty)` is the entry point every task passes through; `getCpuUtilizationModel()`. |
 | `DefaultMobileDeviceManager` | The real task lifecycle state machine: upload → (optional) execution on assigned VM → download → logging, PLUS **task partitioning**: `submitTask` branches on `TaskProperty.isPartitionable()`, then on `SimSettings.isTaskDag(taskType)`, into either `submitPartitionableTask(...)` (flat) or `submitDagTask(...)` (layered DAG, tutorial15+ — see §6.3b). Both create a `parentTaskId`, split the task into N children (`splitTaskProperty`/`splitTaskPropertyIntoDagLayers`, currently **always an equal split** — see §7 gotchas), and submit sibling batches (one per layer, for a DAG) via the shared `submitChildTaskBatch` (calls `EdgeOrchestrator.getVmsToOffload` once per batch), tracking completion/failure in an internal `PartitionState` (upload/download delay sums, `completedChildren`/`totalChildren`, `failed` flag, plus `isDag`/`remainingLayers` for the DAG path) so the **parent** task gets exactly one aggregated log entry (see `SimLogger.taskEnded`). Any sibling failure fails the whole partition/DAG (`failPartition(...)`). |
+| `DefaultMobileDeviceManager` (streams, tutorial18+) | `submitTask` first checks for a `StreamTaskProperty` and routes it to `submitStream`: the stream is the ONE unit logged in the statistics (like a partitioned task's parent), tracked in a `StreamState` (`streamStateMap`); `releaseStreamLayer` builds every node of the next layer (`planStreamNode` - a plain `Task` or a `PreparedPartition`), has the orchestrator choose all their UAVs at once, works out the inter-layer relay delay with the same `getInterLayerRelayDelay` the sub-task DAG uses, and `startStreamLayer` then starts the nodes on those UAVs (`submitPlainTaskToVm` / `startPartitionedTask`, the latter also what `submitApplicationTask` now uses for a standalone partitioned request, with no preselected VMs) - minus the app's own `task_timeout`; `onStreamNodeEnded` (a `SimLogger.StreamNodeListener`, registered in `initialize()`) advances the layers, completes the stream after the last one or releases it when a node failed, and after a timeout waits for the running nodes before logging `TIMED_OUT` (`timeoutStream`). See §6.11. |
 | `Task` (extends CloudSim `Cloudlet`) | Adds `submittedLocation`, `creationTime`, `type`, `mobileDeviceId`, `hostIndex`/`vmIndex`/`datacenterId`, and partition bookkeeping: `partitionChild`, `parentTaskId`, `childIndex`, `childCount`. |
 | `CpuUtilizationModel_Custom` | Looks up per-app, per-tier (`EDGE_VM`/`CLOUD_VM`/`MOBILE_VM`) CPU utilization from `applications.xml` (`vm_utilization_on_*`) via `SimSettings.getTaskLookUpTable()`; `predictUtilization(vmType)` is what orchestrators call *before* binding a task to estimate fit. |
 | `edge_client/mobile_processing_unit/` (`MobileServerManager`, `DefaultMobileServerManager`, `MobileHost`, `MobileVM`, `MobileVmAllocationPolicy_Custom`) | Same abstract-manager/XML-driven pattern as edge/cloud, but models the **mobile device's own** local processing tier (used when an orchestrator decides to run a task locally instead of offloading). |
@@ -136,7 +163,8 @@ flowchart TB
 |---|---|
 | `Location` | `(xPos, yPos, servingWlanId, placeTypeIndex)`. |
 | `TaskProperty` | Immutable descriptor produced by a `LoadGeneratorModel` for one task instance: timing, size, `taskType`, `mobileDeviceId`, `partitionable`/`partitionCount` (looked up from `SimSettings` at construction time). |
-| `SimLogger` | Singleton; buffers per-task and per-VM/location logs, writes `.log`/`.csv` files at `simStopped()`; also the destination for `addUavLocationLog(time, uavId, x, y)` → `<prefix>_UAV_LOCATIONS.log`. |
+| `StreamTaskProperty` (extends `TaskProperty`) | (tutorial18+) One request of a **stream** (§6.11): `getStreamIndex()` + `getNodeLayers()` (one pre-sampled `TaskProperty` per node, per layer, in dependency order). Its own `taskType` is the stream's task type (`SimSettings.getStreamTaskType`) - streams are numbered right after the applications - and its length/upload/download are only informational sums over its nodes. `DefaultMobileDeviceManager.submitTask` dispatches on `instanceof StreamTaskProperty`. |
+| `SimLogger` | Singleton; buffers per-task and per-VM/location logs, writes `.log`/`.csv` files at `simStopped()`; also the destination for `addUavLocationLog(time, uavId, x, y)` → `<prefix>_UAV_LOCATIONS.log`. Scenarios with world events (tutorial19+) also call `addEventLog(line)` (one `WorldEvent.toLogLine` per event, before the run) → `<prefix>_EVENTS.log` (`index;name;start;end;x;y;radius;attractionRadius;request;services`; written only when at least one event was added, so scenarios without events produce no such file) - the heat-map video of tutorial19 draws the events from it. |
 | `SimUtils` | RNG (`RNG` field), `getRandomNumber`, `getEuclideanDistance`, time-diff formatting. |
 | `PoissonDistr` | Poisson sampling helper used by load generators. |
 
@@ -154,6 +182,9 @@ flowchart TB
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
 | `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task) and `dag_partition_weights=0.1, (0.4, 0.4), 0.1`, swept against `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `FULL_WEIGHTED` runs the SAME real layered DAG but split per the app's explicit `dag_partition_weights`, via a `partition_strategy` override to `DAG_PARTITION_STRATEGY_WEIGHTED` - see §6.3d; `FULL_(<weights>)` runs the SAME real layered DAG but split per weights encoded directly in the policy name itself, ignoring the app's own `dag_partition_weights` for that run - see §6.3d point 5; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b/§6.3d. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
 | `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`). It sweeps the number of users (`min`/`max_number_of_mobile_devices`) and, like tutorial15's `task_partition_policies`, a list of **VM utilization policies**: `vm_utilization_policies=UTILIZATION_10,UTILIZATION_30,UTILIZATION_50,...` in `default_config.properties` — each entry is a policy name `UTILIZATION_<percent>` (decimals allowed) whose value `MainApp` writes into every app's `vm_utilization_on_edge` for that run via `SimSettings.setEdgeVmUtilization()` (applications.xml's own value is only a placeholder), so several utilizations land in the same plot as separate lines (same "numeric parameter encoded in the policy name" convention as `PARTITION_<N>`, §6.2 point 8). A missing list or an entry that isn't `UTILIZATION_<percent>` aborts the run up front. Results go to `sim_results/tutorial16/ite<N>/SIMRESULT_<scenario>_<orchestrator>_UTILIZATION_<percent>_<users>DEVICES_*`. No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. With the default 1 task per user per 100 s and mean 1 s service the offered load is users/100; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. `python/` is tutorial15's plotting folder copied as-is (`plot.sh` + `plotAvg*.py`), adapted only so the scenarios/legends come from `vm_utilization_policies` (legend "30% Utilization"; x axis is the number of clients). |
+| `tutorial17` | Compares **service placement policies** (§6.10): which application services each UAV hosts is decided by a `ServicePlacementPolicy` swept via `service_placement_policies` in `default_config.properties` (currently `SINGLE,ALL`) instead of hard-coded per-host `service_capability` lists. `applications.xml` defines 4 otherwise-identical apps (`SERVICE_APP_0..3`, each `usage_percentage=25`), one per explicit `service_index` (0-3); `edge_devices.xml` (16 UAVs, tutorial10's 4-datacenter/4-host-each corner layout) declares no `service_capability` at all. `SINGLE` gives each UAV exactly one service (16 UAVs / 4 services = 4 UAVs per service, interleaved so every datacenter's UAVs host different services), `ALL` gives every UAV every service. `UAVEdgeOrchestrator`/`UAV.canServeTaskType()` enforce the result on every placement decision - a task whose service is hosted by no in-range, non-full UAV is rejected (`REJECTED_DUE_TO_VM_CAPACITY`). `MainApp` sweeps placement policy as the innermost loop (inside the UAV mobility option), `SIMRESULT_*` file names gain a `_<PLACEMENT>` segment after the mobility option, and the python plot lines are the placement policies (`config.py` holds the first `uav_mobility_options` entry fixed, and warns if more are listed). Users move with a plain, non-converging random walk (tutorial6's `SampleMobilityModel`, reused directly - no `ConvergingMobilityModel`/meeting zone), while `uav_mobility_options` sweeps every real `CentralizedUAVMobility` policy EXCEPT `NO`/`RANDOM`: `PRIORITY_KMEANS,APF,CAPACITY_FILL,ADAPTIVE_KMEANS` (see §6.2). No SAR, no partitioning - uses the core `IdleActiveLoadGenerator` directly, same non-SAR structure as tutorial16. |
+| `tutorial18` | tutorial17's service-placement scenario (same random-walk users, 16-UAV `edge_devices.xml`, `SINGLE,ALL` placement sweep, centralized UAV mobility) plus **streams** (§6.11). Takes a 6th `MainApp` argument, `streams.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 4th `;` field). `applications.xml`: `SERVICE_APP_0` (plain, `usage_percentage` 20, with its own `task_timeout` that only applies standalone), `SERVICE_APP_1` (`usage_percentage` 20 and itself a `dag_layers=1,2,1` DAG of sub-tasks, so it runs as that DAG both alone and as a stream node), `SERVICE_APP_2`/`SERVICE_APP_3` (`usage_percentage` 0 - stream nodes only). `streams.xml`: `SURVEILLANCE_STREAM` (30%, `1,2,1`: `SERVICE_APP_0, (SERVICE_APP_1, SERVICE_APP_2), SERVICE_APP_3`, own 20 s timeout, 60 s active / 30 s idle) and `MONITORING_STREAM` (30%, `1,1`, no timeout, always active); applications' 40% + streams' 60% = 100. Uses `IdleActiveStreamLoadGenerator`. Statistics gain one `<STREAM_NAME>_GENERIC.log` per stream next to the per-app ones (only apps/streams with `usage_percentage` > 0 get a file, so the stream-only `SERVICE_APP_2/3` have none), `ALL_APPS_GENERIC.log` aggregates ONLY the applications requested on their own and `ALL_STREAMS_GENERIC.log` only the streams (§6.11 point 4). `python/` is tutorial17's plotting folder made group-aware: every plot is produced twice, into `<output>/applications/` (the overall `ALL_APPS` plot + one per standalone application) and `<output>/streams/` (overall `ALL_STREAMS` + one per stream) - see `config.get_plot_groups()`; applications that are only stream nodes get no application plots, and a stream's nodes never count in the application plots. |
+| `tutorial19` | **Service-aware UAV mobility under world events** (§6.12): compares the service-blind `PRIORITY_KMEANS` baseline with `SERVICE_KMEANS`, `SERVICE_APF` and `SERVICE_CAPACITY_FILL` (`uav_mobility_options`; `service_placement_policies=SINGLE` - each of the 16 UAVs hosts ONE of 4 services, so where a UAV is matters). Built from tutorial18 (`streams.xml`, `IdleActiveStreamLoadGenerator` base) with a 7th `MainApp` argument, `events.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 5th `;` field; `plot.sh` copies it to the results). Users do not request in their own time: `event_requests_only=true` makes them request ONLY while inside the radius of an active **world event**, and only that event's request; `event_gather=true` makes the crowd walk to the events. `events.xml` lists 7 events, one `<event>` each (radius 100 m, attraction radius 450 m, participation 50%, 200-1800 s, overlapping in time, far apart, each asking for a different set of services: `CONCERT`→`VIDEO_APP`, `WILDFIRE`→`FIRE_STREAM`, `ACCIDENT`→`TRAFFIC_STREAM`, `MATCH`→`BROADCAST_STREAM`, `FLOOD`→`DETECT_APP`, `PARADE`→`MAP_APP`, `STORM`→`RESCUE_STREAM`). `EventMobilityModel` (users) and `EventLoadGenerator` (requests) implement the events; `applications.xml` has 4 identical-workload applications, one per service; `streams.xml` has 4 streams (`RESCUE_STREAM` `1,2,1`, `FIRE_STREAM` `1,2`, `TRAFFIC_STREAM` `1,1`, `BROADCAST_STREAM` `2`) needing 2-4 services at once. Their `usage_percentage` etc. only matter when `event_requests_only=false` (they are then the users' normal pattern, adding up to 100, and the events' requests come on top). Writes `_EVENTS.log`. `python/` is tutorial18's group-aware plotting folder with one line per MOBILITY policy (instead of per placement policy), `plotTaskFailureReason.py` enabled (VM capacity - which also counts "no in-range UAV hosts the service" - and bandwidth) and `plotUserLocationHeatmapVideo.py` rewritten: it draws the events from `EVENTS.log` (solid circle = request radius, dashed = attraction radius, label with the request and the number of users inside) and colors every UAV by the service it hosts. |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -162,15 +193,24 @@ new experiment rather than editing core classes in place.
 
 ## 5. Config files reference
 
-Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimSettings.initialize(...)`:
+Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial18 on: see `streams.xml` below; five in tutorial19: see `events.xml`), all parsed by `SimSettings.initialize(...)`:
 
 - **`default_config.properties`** — flat key=value. Comma-separated values become sweep
   axes in `MainApp` (e.g. `orchestrator_policies`, `simulation_scenarios`,
   `task_partition_policies` [tutorial7+], `uav_mobility_options` [tutorial6+],
-  `vm_utilization_policies` [tutorial16 - `UTILIZATION_<percent>` entries, see §4]). New scalar
+  `vm_utilization_policies` [tutorial16 - `UTILIZATION_<percent>` entries, see §4],
+  `service_placement_policies` [tutorial17 - `SINGLE`/`ALL`, see §6.10; defaults to `ALL`]). New scalar
   knobs (like tutorial8's `sar_*` keys) should default to a harmless value (0/empty) so
   older tutorials that don't set them are unaffected — see `SimSettings` SAR fields for
-  the pattern.
+  the pattern. World-event / service-aware-mobility knobs (tutorial19+, all default to a
+  value that changes nothing - see §6.12): `event_requests_only` (default `false`: users
+  request ONLY inside an event's radius, and only its request), `event_gather` (default
+  `false`: users within an event's attraction radius may walk to it), `event_gather_speed`
+  (m/s, default 5), `service_demand_window` (seconds of past requests the service-aware UAV
+  policies react to, default 60) and `service_demand_lookahead` (seconds of FUTURE requests they
+  may also see - an oracle, default 0). The knobs only take effect in a scenario whose
+  mobility model / load generator implements them (tutorial19's `EventMobilityModel` /
+  `EventLoadGenerator`); `uav_mobility_options` may name the service-aware policies.
 - **`applications.xml`** — one `<application name="...">` per task type, parsed into
   `SimSettings.getTaskLookUpTable()` (a `double[appIndex][columnIndex]` table). Columns
   (mandatory): `usage_percentage`, `prob_cloud_selection`, `poisson_interarrival`,
@@ -185,11 +225,38 @@ Each tutorial's `scripts/tutorialN/config/` has three files, all parsed by `SimS
   overrides `partition_count` with the sum of every layer — see §6.3b. Optional
   `task_timeout` (seconds, per-app — different apps can have different urgency):
   `<=0`/absent (the default) disables hard task-timeout cancellation for that app
-  entirely — see §6.9.
+  entirely — see §6.9. Optional `service_index` (integer, tutorial17+): the label an
+  edge host's `edge_devices.xml` `service_capability` list references to restrict a UAV
+  to this app — defaults to the app's own 0-based position in this file (the same value
+  as `Task.getTaskType()`/`SimSettings.getTaskServiceIndex()`) when absent — see §6.10.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
-  mobility models.
+  mobility models. Optional per-`<host>` tag (tutorial17+, UAV scenarios only):
+  `service_capability` (comma list of `service_index` values, e.g. `0,2`) restricts that
+  host's UAV to running only the listed app(s) — absent/empty (the default) leaves the
+  UAV UNRESTRICTED (can run every app), preserving the original behavior for every
+  edge_devices.xml that doesn't set it. A scenario that computes capabilities with a
+  `ServicePlacementPolicy` (tutorial17) ignores this tag — see §6.10.
+- **`streams.xml`** (optional, tutorial18+; passed to the 4-argument `SimSettings.initialize`,
+  parsed AFTER `applications.xml` since nodes refer to applications by name) — one
+  `<stream name="...">` per stream, with only the fields a stream needs: mandatory
+  `usage_percentage`, `poisson_interarrival`, `active_period`, `idle_period`, `dag_layers`
+  (`1,2,1`), `dag_services` (the application of each node, per layer: a bare name for a
+  one-node layer, a parenthesized list for a wider one - `SERVICE_APP_0, (SERVICE_APP_1,
+  SERVICE_APP_2), SERVICE_APP_3`; the same grammar as `dag_partition_weights`); optional
+  `task_timeout` (seconds, soft, for the whole stream). A stream's name must be unique across
+  streams AND applications (it names the `<name>_GENERIC.log` file). Parse errors (unknown
+  application, layer/node count mismatch, ...) terminate the simulation with a message.
+  See §6.11.
+- **`events.xml`** (tutorial19+; NOT parsed by `SimSettings` - the scenario's `MainApp` passes it
+  to `events/WorldEventLoader` after `SimSettings.initialize`) - one `<event name="...">` per world
+  event that will happen, listed explicitly: mandatory `start_time`, `end_time` (simulation
+  seconds), `x_pos`, `y_pos`, `radius` (m; users inside request while it is active), `request` (an
+  application or stream NAME) and `poisson_interarrival` (mean seconds between one user's requests
+  inside); optional `attraction_radius` (m, at least `radius`, default `radius`: users within it
+  when the event starts may walk to it with `event_gather`) and `participation` ([0,1], default 1:
+  the share of those users that go). See §6.12.
 
 ## 6. Cookbook — "How do I add a new ___?"
 
@@ -231,6 +298,8 @@ abstract base classes.
 6. If the policy averages/partitions user positions, skip devices where
    `MobilityModel.isActive(deviceId, time)` is false (see §6.5) so a staged
    subpopulation can't be mistaken for real, present users.
+   A CENTRALIZED policy that must know WHICH service is wanted where (not just where the
+   users are) should instead take its demand from `ServiceDemandTracker` - see §6.12.
 7. `scripts/tutorial8/python/plotGenericLine.py`'s `plot_generic_line` saves figures as
    `<metric_name>_<app_type>.pdf` (pass a short PascalCase `metric_name`, e.g.
    `'FailedTask'`) rather than `<row_offset>_<column_offset>_<app_type>.pdf` — always pass
@@ -556,8 +625,225 @@ tutorial's behavior changes unless its apps explicitly set `task_timeout > 0`.
   a `pendingTimeouts` entry leaks for the rest of the run and could log a stale/incorrect
   TIMED_OUT outcome for a task id that has already resolved through a different path.
 
+### 6.10 Per-UAV service-capability restriction & service placement policies (tutorial17 pattern)
+Restricts a UAV to running only a declared subset of applications, instead of every UAV
+being able to run every app (the pre-existing, still-default behavior). The subset is
+either declared per host in `edge_devices.xml` (step 1) or computed by a service
+placement policy (step 5, what tutorial17 uses).
+1. **Config**: `applications.xml`'s optional `<service_index>` (integer) labels an app
+   for this purpose - defaults to that app's own 0-based position in the file (the same
+   value as `Task.getTaskType()`) when absent, so existing `applications.xml` files need
+   no change. `edge_devices.xml`'s optional `<service_capability>` tag on any `<host>` is
+   a comma list of these `service_index` values (e.g. `0,2`) - the host's UAV may ONLY
+   run app(s) in that list. A host that doesn't set the tag remains UNRESTRICTED (runs
+   every app), so every pre-tutorial17 `edge_devices.xml` is unaffected.
+2. **Parsing** (`SimSettings`): `taskServiceIndex[]` (parsed in `parseApplicationsXML`,
+   exposed via `getTaskServiceIndex(taskType)`) and `edgeHostServiceCapability` (a
+   `List<int[]>` parsed in `parseEdgeDevicesXML`, exposed via
+   `getHostServiceCapability(hostId)`) - the list's index `hostId` relies on
+   `parseEdgeDevicesXML` traversing `<datacenter>` → `<host>` in the exact same document
+   order, incrementing one global counter, as every `EdgeServerManager` implementation's
+   own `hostIdCounter` when it later constructs the matching `UAV` object - so index i
+   here always corresponds to the host actually assigned id i. A null/missing entry
+   means unrestricted.
+3. **Enforcement**: `UAV`'s original constructor reads its own capability list once via
+   `SimSettings.getHostServiceCapability(id)` (every tutorial's `SampleEdgeServerManager`
+   already passes its own `hostIdCounter` as the UAV's `id`); a second constructor takes
+   the list explicitly (step 5). `UAV.canServeTaskType(serviceIndex)` returns `true`
+   unconditionally when unrestricted, else checks membership. `UAVEdgeOrchestrator.getUAVToOffloadTo`
+   skips any UAV for which `canServeTaskType(SimSettings.getTaskServiceIndex(task.
+   getTaskType()))` is `false`, alongside its existing range/capacity checks - a task
+   with NO capable, in-range, non-full UAV is rejected exactly like any other "no
+   suitable VM" case (`REJECTED_DUE_TO_VM_CAPACITY`, no new failure reason needed).
+4. **Not mobility-aware**: no `BasicUAVMobility`/`CentralizedUAVMobility` policy knows
+   about a UAV's service-capability restriction - they still move every UAV based purely
+   on device positions/priorities, oblivious to which app a nearby device is about to
+   request. A capability-restricted UAV can therefore still end up far from the one
+   device that needed it; see `tutorial17` for a scenario deliberately built to surface
+   this (see §4).
+5. **Service placement policy** (tutorial17): instead of hard-coding `service_capability`
+   per host, `default_config.properties`'s `service_placement_policies` (comma list,
+   parsed into `SimSettings.getServicePlacementPolicies()`, defaults to `ALL`) names the
+   policies to compare. `edge_server/uav/ServicePlacementPolicy` turns a policy name into
+   `int[][] place(numOfUAVs)` (per UAV id, the `service_index` values it hosts; supported:
+   `SINGLE`, `ALL`, see §3). tutorial17's `SampleEdgeServerManager` is built with the
+   policy, calls `place(SimSettings.getNumOfEdgeHosts())` in `startDatacenters()`, logs the
+   resulting placement, and passes each UAV its own entry through the explicit-capability
+   `UAV` constructor (so `edge_devices.xml` carries no `service_capability` tag there).
+   `MainApp` validates every listed policy name up front and sweeps the policy as its
+   innermost loop; the policy name is part of the `SIMRESULT_*` file name
+   (`..._<MOBILITY>_<PLACEMENT>_<N>DEVICES_...`). To add a policy: add a name to
+   `ServicePlacementPolicy.SUPPORTED_POLICIES` and a `case` in `place()`. Later
+   per-service attributes (priority, size, popularity) should be parsed from
+   `applications.xml` into `SimSettings` (next to `taskServiceIndex`) and read there by the
+   new policy cases.
+
+### 6.11 Streams: DAGs whose nodes are applications/services (tutorial18 pattern)
+A *stream* is a request type next to the plain applications: a DAG like `dag_layers` (§6.3b),
+but each node is an **application** (a service) instead of a sub-task. A scenario can mix
+plain applications (themselves possibly DAGs of sub-tasks) and streams freely; an application
+may be requested by itself (devices assigned to it) and/or be a node of a stream.
+1. **Config** (`streams.xml`, see §5): per stream `usage_percentage`, `poisson_interarrival`,
+   `active_period`, `idle_period`, optional `task_timeout`, `dag_layers`, `dag_services`.
+   `SimSettings.parseStreamsXML` validates them and exposes `getNumOfStreams()`,
+   `getStream*(streamIndex)`, `getStreamNodeApplications(streamIndex)` (`int[layer][node]` =
+   applications.xml index). Streams are **task types numbered right after the applications**:
+   `getStreamTaskType(i) = numApplications + i`; `getNumOfTaskTypes()` (apps + streams) is the
+   size for any per-type statistics, `getTaskName`/`isTaskTypeUsed` accept stream task types.
+   `getTaskLookUpTable()` is still applications only, so nothing indexed by app type changes.
+2. **Which request a device makes**: `IdleActiveStreamLoadGenerator` draws ONE type per device
+   from the applications' and streams' `usage_percentage` together (must total 100) and then
+   uses THAT type's own timing. An application that is only a stream node has
+   `usage_percentage` 0 (its other tags are required by the parser but never used).
+   **An application's `usage_percentage`/`poisson_interarrival`/`active_period`/`idle_period`/
+   `task_timeout` never affect a stream it is a node of** - only its workload (length, data
+   sizes, utilization, partitioning, ...) does.
+3. **Execution** (`DefaultMobileDeviceManager.submitStream`): the stream request is logged as
+   ONE task of the stream's task type. Layers are *released* one at a time
+   (`releaseStreamLayer`), exactly like a DAG application's sub-task layers (§6.3b/§6.3c): every
+   node's task(s) are built (a plain `Task`, or a partitioned node's first sibling batch via
+   `preparePartitionedTask`) WITHOUT registering anything, the orchestrator chooses the UAVs of
+   the whole layer in ONE `getVmsToOffload` call (`UAVEdgeOrchestrator`/`UAV.canServeTaskType`,
+   §6.10), the relay delay is worked out, and only after it does `startStreamLayer` register and
+   start the nodes on those UAVs (`submitPlainTaskToVm`, or `startPartitionedTask` with the
+   preselected VMs - so a node that is itself a DAG/flat partition runs as exactly that). A
+   node with no UAV (null) is rejected (`REJECTED_DUE_TO_VM_CAPACITY` - "dropped"), and **any
+   failing node fails the whole stream** (no partial success, like a DAG's sub-task), with the
+   node's own failure reason. Because UAVs are chosen when the layer is released, a plain
+   stream node is placed BEFORE it uploads (a standalone plain request is placed after) and a
+   device outside every capable UAV's range is "no UAV", not a bandwidth rejection.
+4. **Inter-layer relay delay** (identical to §6.3c): a completed node reports its output (KB per
+   UAV: a plain node's `getCloudletOutputSize()` on its UAV, a partitioned node's last layer's
+   `currentLayerOutputKbByHost`) into `StreamState.layerOutputKbByHost` via
+   `recordStreamNodeOutput`. When the layer is done, `getInterLayerRelayDelay` - the very method
+   the sub-task DAG uses - takes, per destination UAV of the next layer, the output produced
+   elsewhere divided by `uav_bandwidth`; the slowest destination decides, 0 when everything
+   already sits on the destination UAVs (and for the first layer). A positive delay is logged on
+   the stream (`SimLogger.addInterLayerDelay`) as UAV delay, folded into its network delay, and
+   the layer starts after it (`SUBMIT_NEXT_STREAM_LAYER`, which carries the prepared nodes).
+5. **Logging** (`SimLogger.addStreamNodeLog`): a node's `LogItem` is flagged with its stream id
+   and, once it ends, is NOT added to the statistics - its network delays (WLAN up/down, UAV
+   relay of a nested DAG) are added to the stream's entry, a failure becomes the stream's
+   outcome, and the registered `StreamNodeListener` (the manager) is told. A node still running
+   when the sim stops is not counted as uncompleted (its stream is). Per-stream statistics get
+   their own `<STREAM_NAME>_GENERIC.log` (`numOfAppTypes` in `SimLogger` is now apps + streams).
+   Every per-type statistics array has 3 extra aggregate slots after the task types
+   (`numOfStatSlots`): all requests (console summary only - no file), the standalone
+   applications only (`ALL_APPS_GENERIC.log` - identical to the old all-requests total in any
+   scenario without streams) and the streams only (`ALL_STREAMS_GENERIC.log`, written only when
+   streams exist); `getGenericFileLabel(slot)` decides which slots get a file.
+6. **Timeout**: the stream's own `task_timeout` is armed (`pendingTimeouts`). A timeout never
+   cuts a running node short, and unlike a plain task's soft timeout (§6.9) the stream is NOT
+   logged at the timeout instant: if nodes of the running layer are still executing when it
+   fires (`StreamState.timedOut`, `SimLogger.markStreamTimeoutPending` so a failing node can no
+   longer become the stream's outcome), those nodes - including a node that is itself a whole
+   sub-task DAG - run to their end, no further layer starts, and the stream is logged
+   `TIMED_OUT` when the last of them has ended, whether it succeeded or failed. If no node is
+   running at that moment (the stream is between layers, e.g. during a relay delay) it is logged
+   `TIMED_OUT` immediately. Nodes never arm the application's `task_timeout`.
+7. **Not modelled (extension points)**: a stream node is requested from the device's location
+   at the moment its layer is released (not after the relay delay, as for a DAG's sub-tasks).
+8. **New scenario**: copy `applications/tutorial18` (`MainApp` takes `streams.xml` as an extra
+   argument and calls the 4-argument `initialize`; the factory returns
+   `IdleActiveStreamLoadGenerator`) and `scripts/tutorial18`.
+
+### 6.12 Service-aware UAV mobility & world events (tutorial19 pattern)
+Goal: UAVs move to where the services THEY host are requested, and the requests are made to
+move, so the difference shows. Two independent pieces:
+
+1. **Service-aware policies** (`CentralizedUAVMobility` cases `SERVICE_KMEANS`, `SERVICE_APF`,
+   `SERVICE_CAPACITY_FILL`, algorithms in `ServiceAwareUavPolicies`). All three work on the
+   **demand** of `ServiceDemandTracker.snapshot(...)`: one entry per request made during the last
+   `service_demand_window` seconds (plus the next `service_demand_lookahead` seconds, an oracle -
+   0 by default, so policies only react to what already happened), located where its device is
+   NOW, weighted by `MobilityModel.getPriority`, and tagged with the service it needs (a stream
+   request gives one entry per node service). A demand entry only counts for UAVs that host its
+   service (`UAV.canServeTaskType`) - that is the one difference to the service-blind
+   counterparts; with every UAV hosting every service they behave alike (use `SINGLE`
+   placement to compare them). A UAV nothing pulls holds its position; with no demand at all
+   nobody moves.
+   - `SERVICE_KMEANS`: Lloyd's algorithm of `PRIORITY_KMEANS`, but a demand entry joins the
+     nearest center of a UAV hosting its service. Converges fast; the UAVs of a service all go to
+     that service's densest demand, so it ignores capacity and a hot spot gets about ONE UAV per
+     service (great at low load, overloaded at high load).
+   - `SERVICE_APF`: attraction only from demand the UAV can serve, repulsion between UAVs scaled by
+     the overlap (Jaccard) of what they host, so UAVs hosting different services stack where a
+     stream needs several at once. Like `APF` it reacts slowly to far demand (force ~ 1/d^2) and
+     overlapping events pull a UAV in between.
+   - `SERVICE_CAPACITY_FILL`: `CAPACITY_FILL`'s grid and per-UAV capacity, per (cell, service):
+     the highest-demand pairs get the nearest unassigned UAV hosting the service, more UAVs while
+     the demand is uncovered. Spreads several UAVs of a service over a crowd - the most robust.
+2. **World events** (`events/WorldEvent`, listed in the scenario's `events.xml` and read by `WorldEventLoader`;
+   `EventMobilityModel`, `EventLoadGenerator`). With `event_gather=true`, every event is considered ONCE per user,
+   at the first mobility step of its window at which the user is free (not on its way to / at
+   another event): a user within the event's `attractionRadius` then goes with probability
+   `participation` - it walks to a point within 70% of the radius at `event_gather_speed`, stays
+   within 90% of it while the event lasts and walks home when it ends.
+   With `event_requests_only=true`, `EventLoadGenerator` skips the normal idle/active generation
+   (and the 100% `usage_percentage` check) and instead draws, per event and device, Poisson
+   arrivals (mean `requestInterarrival`) from `start` to `end`, keeping a request only if the
+   device's position at that time is inside the event's `radius`; the request is the event's
+   application/stream (a stream is built by `IdleActiveStreamLoadGenerator.createStreamRequest`),
+   and no other request is ever made. Because the whole task list is generated before the run,
+   `SimManager` now initializes the mobility model BEFORE the load generator (so a generator can
+   look up where a device is - see §7).
+3. **Logging / plotting**: `SimLogger.addEventLog` -> `<prefix>_EVENTS.log`; tutorial19's
+   `plotUserLocationHeatmapVideo.py` draws the active events and colors UAVs by hosted service.
+   The statistics are the tutorial18 ones: applications and streams each get their own plot folder.
+4. **Typical result** (tutorial19 defaults, 10 iterations, failed requests): the baseline
+   `PRIORITY_KMEANS` fails ~60-90% of the applications and ~95-99% of the streams; the
+   service-aware policies are far better - `SERVICE_KMEANS` best at 100 users (~5%) but ~70% /
+   ~50% at 800, `SERVICE_CAPACITY_FILL` ~12-28% / ~30%, `SERVICE_APF` ~10-35% for applications but
+   ~60% for streams (slow to bring ALL the services of a stream to the same place).
+5. **New scenario**: copy `applications/tutorial19` and `scripts/tutorial19`, edit
+   `events.xml` (add, remove or edit `<event>` entries: positions, windows, request names - any
+   mistake fails with a message naming the event) and `applications.xml`/`streams.xml`. Make sure the events lie inside the
+   `*_bound` area, that every requested application/stream has `usage_percentage` > 0 (else it
+   gets no `_GENERIC.log` and no plot), and that `service_placement_policies` is `SINGLE` (or
+   another placement where UAVs host different services).
+6. **Not modelled (extension points)**: events are exactly the ones listed in `events.xml` (a random
+   generator - e.g. exponential interarrival times - would only need to return a `List<WorldEvent>`
+   in place of `WorldEventLoader.load`); events are circles with a uniform
+   participation probability; a user is drawn to at most one event at a time, and an event is only ever considered once per user (it
+   is not reconsidered if the user was outside its attraction radius then);
+   only the centralized controller is service-aware (no decentralized variant).
+
 ## 7. Known gotchas / pre-existing quirks (verified in code)
 
+- **`SimManager` initializes the mobility model BEFORE the load generator** (it used to be
+  the other way round; since tutorial19). A load generator may therefore ask
+  `getMobilityModel()` where a device is while it builds the task list (tutorial19's
+  `EventLoadGenerator` does); the mobility model must not need the task list in
+  `initialize()`. No existing mobility model did. (Results of older tutorials only differ by
+  the random-number draw order - statistically identical, checked on tutorials 14/15/17/18.)
+- **The service-aware UAV policies only differ from the blind ones when UAVs host DIFFERENT
+  services** (`SINGLE` placement). Under `ALL` they are, by design, the same policies counting
+  requests instead of devices. Their effect also depends on where requests come from: with
+  uniformly spread users (no events) service-aware UAVs have nothing to react to.
+- **`EVENTS.log` is only written when events were added with `SimLogger.addEventLog`**
+  (tutorial19+); scenarios without events produce no such file.
+- **A stream layer starts its nodes in order, and stops at the first one no UAV can take.**
+  `releaseStreamLayer` already knows at release time which nodes of the layer found no UAV, but
+  `startStreamLayer` still starts the nodes ahead of the failing one (uploading and running them
+  for nothing, since the stream is then failed) and not the ones behind it - exactly what a
+  DAG application's sub-task layer does (`submitChildTaskBatch`), which streams mirror on
+  purpose. Failing the stream at release instead was measured on tutorials 18/19 (400 users, 10
+  iterations): failure rates move by at most ~1-2 points (the baseline's streams by ~5), the
+  ranking of the policies does not change - so it has not been changed.
+- **Timeouts have no column in `GENERIC.log`.** A TIMED_OUT stream/application counts in
+  `failed` (column 2) but in none of the failure-reason columns (bandwidth, VM capacity,
+  mobility, WLAN range); `failed - (those four)` is the number of timeouts. The
+  failure-reason plots (`percentage_of_failed`) therefore only add up to 100% when nothing times
+  out - true for tutorial 19, whose admission check keeps queues short at every swept load.
+- **Stream node placement is only as good as the service availability around the device.**
+  With `SINGLE` placement a stream needing several different services at once almost never
+  finds all of them within `UAV.SERVICE_RADIUS` of the device - expect near-0% completion for
+  wide streams (tutorial18's `SURVEILLANCE_STREAM` needs all 4 services); that is the model
+  working, not a bug. Stream statistics are per *request*, so a stream failing early is one
+  failed request however many nodes it had.
+- **`usage_percentage` of applications + streams must total 100** when a scenario uses
+  `IdleActiveStreamLoadGenerator` (it exits otherwise, naming the sum) - a stream-only
+  application therefore needs `usage_percentage` 0, not a share of the 100.
 - **`partition_strategy` is still parsed-but-unused for FLAT partitioned tasks.**
   `DefaultMobileDeviceManager.splitTaskProperty` always splits length/upload/download
   equally among children, regardless of the `partition_strategy` XML value - `EQUAL` is

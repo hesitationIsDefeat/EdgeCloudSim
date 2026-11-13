@@ -45,6 +45,14 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
         double lowestLoad = Double.MAX_VALUE;
 
         for (UAV uav: uavs) {
+            // ONAT: Skip UAVs that aren't allowed to run this task's app at all
+            // (edge_devices.xml's <service_capability> list, matched against the app's
+            // service_index in applications.xml - see UAV.canServeTaskType()). An
+            // unrestricted UAV (no service_capability declared) can run any app, so
+            // this never rejects anything for scenarios that don't use the feature.
+            int serviceIndex = SimSettings.getInstance().getTaskServiceIndex(task.getTaskType());
+            if (!uav.canServeTaskType(serviceIndex)) continue;
+
             // ONAT: Check if the user is in the service range of the UAV
             double distance = SimUtils.getEuclideanDistance(senderLocation, uav.getLocation());
             if (distance > UAV.SERVICE_RADIUS) continue;

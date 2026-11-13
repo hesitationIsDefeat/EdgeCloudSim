@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Non-interactive backend so plt.show() doesn't pop up a window and block each script.
+export MPLBACKEND=Agg
+
+# ONAT: archive the config used for this run into the results folder, so reviewing
+# results later doesn't require cross-referencing scripts/tutorial18/config (which may
+# have changed since, e.g. for a later sweep). Kept as .xml/.properties (not renamed to
+# .txt) since that's the simpler default - rename below if a viewer/tool needs .txt.
+config_dir="../config"
+tutorial_names_file="../../../config/tutorial_names.properties"
+tutorial_name=$(grep "^tutorial18=" "$tutorial_names_file" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+: "${tutorial_name:=tutorial18}"
+# PLOT_RUN_DIR (set by plot_all.sh) redirects output into a shared timestamped folder.
+output_root="${PLOT_RUN_DIR:-../../../sim_results/tutorial18}"
+results_dir="${output_root}/${tutorial_name}"
+mkdir -p "$results_dir"
+cp "$config_dir/default_config.properties" "$results_dir/"
+cp "$config_dir/edge_devices.xml" "$results_dir/"
+cp "$config_dir/applications.xml" "$results_dir/"
+cp "$config_dir/streams.xml" "$results_dir/"
+# ONAT: the plots themselves go to two sub-folders of $results_dir - 'applications' (the
+# applications devices request on their own) and 'streams' - see config.get_plot_groups().
+
+# Array of python scripts to execute
+scripts=(
+    "plotAvgFailedTask.py"
+    "plotAvgNetworkDelay.py"
+    "plotAvgProcessingTime.py"
+    "plotAvgServiceTime.py"
+    "plotAvgVmUtilization.py"
+    #"plotUserLocationHeatmapVideo.py"
+    #"plotDelayReasonAsBar.py"
+    #"plotGenericLine.py"
+    #"plotLocation.py"
+    #"plotTaskFailureReason.py"
+    #"plotTimeComplexity.py"
+)
+
+echo "Starting plot generation sequence..."
+echo "------------------------------------"
+
+for script in "${scripts[@]}"
+do
+    if [ -f "$script" ]; then
+        echo "Running $script..."
+        python3 "$script"
+        
+        # Check if the script executed successfully
+        if [ $? -eq 0 ]; then
+            echo "Successfully finished $script."
+        else
+            echo "Error: $script failed to execute."
+        fi
+    else
+        echo "Warning: $script not found in the current directory."
+    fi
+    echo "------------------------------------"
+done
+
+echo "All tasks completed."
