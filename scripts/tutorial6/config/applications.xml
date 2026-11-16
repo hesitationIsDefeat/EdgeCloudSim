@@ -4,7 +4,23 @@
 	     their phones for everyday messaging - not the SAR teams' disaster-response apps
 	     (DISASTER_MAP_FUSION / SITUATION_AWARENESS_ALERTS), which now live in tutorial8
 	     alongside these normal users. -->
+
+	<!-- ONAT: UAV RAM costs, in MB. A UAV admits a task by RAM alone: service_ram is spent once on
+	     every UAV that hosts the app's service (no <service_capability> is declared, so every
+	     UAV hosts both apps: 100 + 250 = 350 MB), queue_ram is held by every task of the app
+	     while it is queued or running on the UAV. A task that does not fit in what is left of the
+	     UAV's VM RAM (8000 MB, edge_devices.xml) is rejected (REJECTED_DUE_TO_VM_CAPACITY), so with
+	     the 7650 MB left after the services a UAV holds up to 765 text messages or 21 photo
+	     messages at once (1 running, the rest queued). vm_utilization_on_edge no longer limits
+	     the queue - it only tells which UAV is the least loaded and feeds the utilization results.
+	       TEXT_MESSAGE:  a tiny app - the messaging runtime is 100 MB and a request holds ~10 MB
+	                      (session state and buffers of 20 KB of text).
+	       PHOTO_MESSAGE: the image pipeline (codecs, thumbnailing) is 250 MB and a request holds
+	                      ~350 MB (the decoded 12 MP bitmap of the 500 KB JPEG plus the resize and
+	                      filter buffers). -->
 	<application name="TEXT_MESSAGE">
+		<service_ram>100</service_ram>
+		<queue_ram>10</queue_ram>
 		<usage_percentage>70</usage_percentage>
 		<prob_cloud_selection>80</prob_cloud_selection>
 		<poisson_interarrival>8</poisson_interarrival>
@@ -20,6 +36,8 @@
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
 	</application>
 	<application name="PHOTO_MESSAGE">
+		<service_ram>250</service_ram>
+		<queue_ram>350</queue_ram>
 		<usage_percentage>30</usage_percentage>
 		<prob_cloud_selection>60</prob_cloud_selection>
 		<poisson_interarrival>25</poisson_interarrival>

@@ -35,15 +35,20 @@
 	     encodes its OWN weights directly in the policy name - same syntax, but read via
 	     SimSettings.setTaskPartitionWeightsOverride() instead of this tag, which it
 	     ignores for that run (see MainApp.FULL_WEIGHTED_PREFIX).
-	     vm_utilization_on_edge (120%, deliberately >100) is sized so a single
-	     unpartitioned task (task_partition_policies=NO) can NEVER fit on an edge VM
-	     (structurally guaranteed REJECTED_DUE_TO_VM_CAPACITY, same convention as
-	     tutorial14's MustPartitionTask), while splitting into several children (FULL,
-	     FULL_LAYERED, or any PARTITION_<N>) divides that 120% by the child count and
-	     comfortably fits once child count >= 2. NOTE: this percentage is ONLY a
-	     declared admission-bookkeeping share (CpuUtilizationModel_Custom) used to
-	     decide whether a VM has room to admit a task (immediately execute it, or queue
-	     it behind whatever's already running) - it has NO effect on how fast a task
+	     queue_ram (8400 MB) is deliberately MORE than an edge VM has left (the VM has 8000 MB
+	     and the service takes service_ram 1000 MB, so 7000 MB): a single unpartitioned
+	     task (task_partition_policies=NO) can NEVER fit on an edge VM (structurally
+	     guaranteed REJECTED_DUE_TO_VM_CAPACITY, same convention as tutorial14's
+	     MustPartitionTask) - think of an in-memory reconstruction of the whole search
+	     area (imagery, point cloud and feature maps, ~8.4 GB), more than any one UAV
+	     can hold. Splitting into several children (FULL, FULL_LAYERED, or any
+	     PARTITION_<N>) divides that 8400 MB by the child count (Task.getQueueRam()) and
+	     fits once child count >= 2: a FULL child (4 children) holds 2100 MB and a UAV holds 3
+	     of them (1 running, 2 queued). A UAV admits a task by RAM alone
+	     (UAVEdgeOrchestrator); vm_utilization_on_edge (120%) no longer admits or rejects
+	     anything. NOTE: this percentage is ONLY a declared CPU share
+	     (CpuUtilizationModel_Custom) used to tell which UAV is the least loaded and for
+	     the utilization results - it has NO effect on how fast a task
 	     actually executes (that's governed purely by cloudlet length / VM mips, see
 	     CloudletSchedulerSpaceShared). Consequently the logged/plotted "average VM
 	     utilization" is capped at (120 / child count)% even while a VM is genuinely
@@ -55,6 +60,8 @@
 	     SARAwareLoadGenerator.selectTaskType) - moot here since DAG_WORKFLOW is the
 	     only normal-user app, so any positive value is selected 100% of the time. -->
 	<application name="DAG_WORKFLOW">
+		<service_ram>1000</service_ram>
+		<queue_ram>8400</queue_ram>
 		<usage_percentage>100</usage_percentage>
 		<dag_layers>1,2,1</dag_layers>
 		<dag_partition_weights>0.1, (0.4, 0.4), 0.1</dag_partition_weights>

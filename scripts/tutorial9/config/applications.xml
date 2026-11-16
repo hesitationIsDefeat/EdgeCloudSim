@@ -3,7 +3,29 @@
 	<!-- ONAT: Normal-user applications (same as tutorial6). Their usage_percentage values
 	     are normalized within this group only - they are selected exclusively for the
 	     swept normal-user population, independently from the SAR apps below. -->
+	<!-- ONAT: UAV RAM costs, in MB. A UAV admits a task by RAM alone: service_ram is spent once on
+	     every UAV that hosts the app's service (no <service_capability> is declared, so every
+	     UAV hosts all four apps: 100 + 250 + 1500 + 600 = 2450 MB), queue_ram is held by every
+	     task of the app while it is queued or running on the UAV. A task that does not fit in
+	     what is left of the UAV's VM RAM (8000 MB, edge_devices.xml) is rejected
+	     (REJECTED_DUE_TO_VM_CAPACITY), so with the 5550 MB left after the services a UAV holds up
+	     to 555 text messages, 15 photo messages, 10 alerts or 2 map fusions at once (1 running,
+	     the rest queued). vm_utilization_on_edge no longer limits the queue - it only tells which
+	     UAV is the least loaded and feeds the utilization results. An app has the same values in
+	     every tutorial that uses it, since its footprint does not depend on the scenario.
+	       TEXT_MESSAGE:               a tiny app - the messaging runtime is 100 MB and a request
+	                                   holds ~10 MB (session state and buffers of 20 KB of text).
+	       PHOTO_MESSAGE:              the image pipeline (codecs, thumbnailing) is 250 MB and a
+	                                   request holds ~350 MB (the decoded 12 MP bitmap of the
+	                                   500 KB JPEG plus the resize and filter buffers).
+	       DISASTER_MAP_FUSION:        the GIS engine and base map are 1500 MB and a request holds
+	                                   ~2000 MB (the fused multi-layer raster of 1.8 MB of
+	                                   compressed imagery plus its intermediate layers).
+	       SITUATION_AWARENESS_ALERTS: the rule engine and its model are 600 MB and a request
+	                                   holds ~550 MB (the window of sensor data it scores). -->
 	<application name="TEXT_MESSAGE">
+		<service_ram>100</service_ram>
+		<queue_ram>10</queue_ram>
 		<usage_percentage>70</usage_percentage>
 		<prob_cloud_selection>80</prob_cloud_selection>
 		<poisson_interarrival>8</poisson_interarrival>
@@ -21,6 +43,8 @@
 		<task_timeout>10</task_timeout>
 	</application>
 	<application name="PHOTO_MESSAGE">
+		<service_ram>250</service_ram>
+		<queue_ram>350</queue_ram>
 		<usage_percentage>30</usage_percentage>
 		<prob_cloud_selection>60</prob_cloud_selection>
 		<poisson_interarrival>25</poisson_interarrival>
@@ -43,6 +67,8 @@
 	     default_config.properties). Their usage_percentage values are normalized
 	     within this group only. -->
 	<application name="DISASTER_MAP_FUSION">
+		<service_ram>1500</service_ram>
+		<queue_ram>2000</queue_ram>
 		<usage_percentage>50</usage_percentage>
 		<prob_cloud_selection>5</prob_cloud_selection>
 		<poisson_interarrival>2</poisson_interarrival>
@@ -60,6 +86,8 @@
 		<task_timeout>20</task_timeout>
 	</application>
 	<application name="SITUATION_AWARENESS_ALERTS">
+		<service_ram>600</service_ram>
+		<queue_ram>550</queue_ram>
 		<usage_percentage>50</usage_percentage>
 		<prob_cloud_selection>5</prob_cloud_selection>
 		<poisson_interarrival>6</poisson_interarrival>
