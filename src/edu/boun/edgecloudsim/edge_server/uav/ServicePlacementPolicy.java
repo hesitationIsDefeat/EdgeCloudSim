@@ -31,8 +31,11 @@ import edu.boun.edgecloudsim.utils.SimLogger;
  * </ul>
  * A "service" is a distinct applications.xml service_index. The services are read from
  * {@link SimSettings} so that service attributes added to applications.xml later on
- * (priority, size, popularity, ...) can be consumed by new policies without changing
- * how callers use this class.
+ * (priority, popularity, ...) can be consumed by new policies without changing
+ * how callers use this class. A service costs its service_ram out of the RAM of the VM of every
+ * UAV that hosts it: every placement is checked against those VM RAMs, and a policy that wants
+ * to pack services by RAM reads {@link SimSettings#getServiceRam(int)} and
+ * {@link SimSettings#getVmRamOfEdgeHost(int)}.
  */
 public class ServicePlacementPolicy {
     public static final String SINGLE = "SINGLE";
@@ -65,17 +68,37 @@ public class ServicePlacementPolicy {
      * @param numOfUAVs number of UAVs to place services on; UAV ids are expected to be
      *                  0..numOfUAVs-1 (the global host id order, see UAV's constructor)
      * @return for every UAV id, the service_index values that UAV hosts
+     * @throws IllegalStateException if the RAM of a UAV's VM cannot hold the services placed on it
      */
     public int[][] place(int numOfUAVs) {
         int[] services = getServices();
+
+        if (SINGLE.equals(policyName) && numOfUAVs < services.length) {
+            SimLogger.printLine("WARNING: " + SINGLE + " service placement has fewer UAVs ("
+                    + numOfUAVs + ") than services (" + services.length + ") - some services run on no UAV");
+        }
+
+        int[][] placement = computePlacement(numOfUAVs, services);
+        checkFitsInRam(placement);
+        return placement;
+    }
+
+    /**
+     * Checks that this policy's placement fits the RAM of every UAV's VM, without placing anything,
+     * so that a sweep can fail before its first scenario instead of part way through.
+     *
+     * @param numOfUAVs see {@link #place(int)}
+     * @throws IllegalStateException if the RAM of a UAV's VM cannot hold the services placed on it
+     */
+    public void validate(int numOfUAVs) {
+        checkFitsInRam(computePlacement(numOfUAVs, getServices()));
+    }
+
+    private int[][] computePlacement(int numOfUAVs, int[] services) {
         int[][] placement = new int[numOfUAVs][];
 
         switch (policyName) {
             case SINGLE -> {
-                if (numOfUAVs < services.length) {
-                    SimLogger.printLine("WARNING: " + SINGLE + " service placement has fewer UAVs ("
-                            + numOfUAVs + ") than services (" + services.length + ") - some services run on no UAV");
-                }
                 for (int uav = 0; uav < numOfUAVs; uav++) {
                     placement[uav] = new int[]{services[uav % services.length]};
                 }
@@ -89,6 +112,26 @@ public class ServicePlacementPolicy {
         }
 
         return placement;
+    }
+
+    /**
+     * ONAT: every service a UAV hosts takes its service_ram (applications.xml) out of the RAM of
+     * the UAV's VM (edge_devices.xml's &lt;ram&gt; of the host's &lt;VM&gt; - not of the host), so a
+     * placement that needs more than that VM has is not a placement. It is an error rather than
+     * being trimmed to what fits: a UAV left with no service would have an empty capability
+     * list, which means UNRESTRICTED (see {@link UAV#canServeTaskType(int)}), i.e. the opposite.
+     */
+    private void checkFitsInRam(int[][] placement) {
+        SimSettings settings = SimSettings.getInstance();
+        for (int uav = 0; uav < placement.length; uav++) {
+            int vmRam = settings.getVmRamOfEdgeHost(uav);
+            double neededRam = settings.getServicesRam(placement[uav]);
+            if (vmRam >= 0 && neededRam > vmRam) {
+                throw new IllegalStateException("Service placement policy '" + policyName + "' puts services "
+                        + Arrays.toString(placement[uav]) + " on UAV" + uav + ", which need " + neededRam
+                        + " MB (service_ram in applications.xml) but the VM of the UAV has only " + vmRam + " MB of RAM");
+            }
+        }
     }
 
     /** Distinct service_index values of every application, in applications.xml order. */
