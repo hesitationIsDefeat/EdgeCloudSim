@@ -166,7 +166,7 @@ public class SampleEdgeServerManager extends EdgeServerManager{
 	// at most 1 task's declared share ever shows up there) - it silently ignores every
 	// other task already admitted but still queued behind it, understating real load
 	// under backlog. Adds the declared share of the waiting list too, same fix already
-	// applied to UAVEdgeOrchestrator's admission check (getWaitingListLoad) - otherwise
+	// applied to UAVEdgeOrchestrator's least-loaded UAV choice (getWaitingListLoad) - otherwise
 	// this metric could never approach 100% even while VMs are continuously saturated.
 	private static double getVmLoad(EdgeVM vm){
 		double load = vm.getCloudletScheduler().getTotalUtilizationOfCpu(CloudSim.clock());

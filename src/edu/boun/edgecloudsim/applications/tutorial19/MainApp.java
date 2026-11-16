@@ -136,6 +136,12 @@ public class MainApp {
                         + "' (supported: " + ServicePlacementPolicy.SUPPORTED_POLICIES + ")");
                 System.exit(0);
             }
+            try {
+                new ServicePlacementPolicy(servicePlacementPolicy).validate(SS.getNumOfEdgeHosts());
+            } catch (IllegalStateException e) {
+                SimLogger.printLine("invalid service placement: " + e.getMessage());
+                System.exit(0);
+            }
         }
         // The events name applications/streams of this tutorial's files, hence loaded after them.
         // They are plain immutable data, so the one list serves every scenario of the sweep.
