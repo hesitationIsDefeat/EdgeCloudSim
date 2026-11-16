@@ -24,9 +24,24 @@ import java.util.Map;
 
 public class UAVEdgeOrchestrator extends EdgeOrchestrator
 {
+    // ONAT: A UAV admits a task by RAM alone: the task is queued (or run) on it only if its
+    // queue_ram fits in what the UAV's VM has left after the services it hosts (service_ram)
+    // and the tasks already on it - see UAV.hasRamFor(). How many tasks that is depends only
+    // on those RAM values (floor((VM RAM - hosted service_ram) / queue_ram) for one kind of
+    // task); an application's vm_utilization_on_edge no longer limits the queue and is only
+    // used to tell which UAV is the least loaded and for the utilization results. A task
+    // without a queue_ram would therefore never be rejected, so none is accepted: startup is
+    // refused instead.
     @Override
     public void initialize() {
-
+        SimSettings settings = SimSettings.getInstance();
+        for (int taskType = 0; taskType < settings.getTaskLookUpTable().length; taskType++) {
+            if (settings.getTaskQueueRam(taskType) <= 0) {
+                throw new IllegalArgumentException("Application '" + settings.getTaskName(taskType)
+                        + "' has no queue_ram above 0 in applications.xml: " + getClass().getSimpleName()
+                        + " admits a task by the RAM it holds on a UAV, so every application needs one");
+            }
+        }
     }
 
     @Override
@@ -65,18 +80,18 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
             // ONAT: TODO: Check for energy
 
 
-            // ONAT: getCurrentLoad() only reflects the single cloudlet CloudletSchedulerSpaceShared
-            // is actively executing (getTotalUtilizationOfCpu sums the exec list only) - add the
-            // declared share of everything still sitting in the waiting list so a UAV with a deep
-            // backlog isn't mistaken for idle just because its one running task has a small share.
+            // ONAT: The declared CPU share (vm_utilization_on_edge) of the running task, of everything
+            // queued behind it and of the siblings reserved in this batch is only the measure of how
+            // loaded a UAV is, for picking the least loaded one - it no longer admits or rejects
+            // anything (see the class comment). getCurrentLoad() only reflects the single cloudlet
+            // CloudletSchedulerSpaceShared is actively executing (getTotalUtilizationOfCpu sums the
+            // exec list only), so the waiting list is added: a UAV with a deep backlog isn't mistaken
+            // for idle just because its one running task has a small share.
             double uavLoad = uav.getCurrentLoad() + getWaitingListLoad(uavVm) + reservedLoad.getOrDefault(uav, 0.0);
-            // ONAT: Check if the requested load fits into the UAV
-            double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uavVm.getVmType());
-            if (uavLoad + taskLoad > 100.0) continue;
 
             // ONAT: Check if the task's queue_ram fits into what is left of the UAV's VM RAM after
             // its hosted services (service_ram), the tasks already on it, and the siblings
-            // reserved in this batch. A task without queue_ram (0) never fails this check.
+            // reserved in this batch. This is the only admission check.
             if (!uav.hasRamFor(task, reservedRam.getOrDefault(uav, 0.0))) continue;
 
             // ONAT: Check for the least loaded UAV
@@ -91,7 +106,8 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
     }
 
     // ONAT: Sums the declared CPU share of cloudlets queued behind the single executing
-    // one, since CloudletSchedulerSpaceShared.getTotalUtilizationOfCpu() is blind to them.
+    // one, since CloudletSchedulerSpaceShared.getTotalUtilizationOfCpu() is blind to them
+    // (used to tell the least loaded UAV, see getUAVToOffloadTo()).
     private double getWaitingListLoad(EdgeVM vm) {
         double waitingLoad = 0.0;
         for (ResCloudlet rcl : vm.getCloudletScheduler().<ResCloudlet>getCloudletWaitingList()) {
