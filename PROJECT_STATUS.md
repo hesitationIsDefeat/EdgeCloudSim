@@ -132,7 +132,7 @@ flowchart TB
 |---|---|
 | `EdgeOrchestrator` (abstract `SimEntity`) | `initialize()`, `getDeviceToOffload(Task)` (cloud vs edge vs mobile, returns a device-type constant), `getVmToOffload(Task, deviceId)` (pick one VM), and `getVmsToOffload(List<Task>, deviceId)` (**batch** selection for sibling sub-tasks of a partitioned task — default impl just loops `getVmToOffload`; override this if your placement needs to see the whole batch's cumulative load before committing, as `UAVEdgeOrchestrator` does). |
 | `BasicEdgeOrchestrator` | Implements `FIRST_FIT`/`NEXT_FIT`/`BEST_FIT`/`WORST_FIT`/`RANDOM_FIT` VM selection, location-aware (`selectVmOnHost`) or global-load-balanced (`selectVmOnLoadBalancer`, only in `TWO_TIER_WITH_EO` scenario) placement on the edge tier, worst-fit-by-capacity on cloud. Policy name comes from `orchestrator_policies` config and is read via `this.policy`. |
-| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10). Overrides `getVmsToOffload` to reserve predicted load per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
+| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10) **AND that has the RAM for the task** (`UAV.hasRamFor()` — `queue_ram`, see §6.10 step 6; always true while no app sets it). Overrides `getVmsToOffload` to reserve predicted load **and queue RAM** per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
 
 ### `edge_server/` — edge (and UAV) infrastructure
 | Class | Role |
@@ -142,8 +142,8 @@ flowchart TB
 | `EdgeHost` | CloudSim `Host` subclass + a `Location`. |
 | `EdgeVM` | CloudSim `Vm` subclass carrying its `VM_TYPES` tag. |
 | `EdgeVmAllocationPolicy_Custom` | VM→host allocation policy for edge datacenters. |
-| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors, and `canServeTaskType(serviceIndex)` (tutorial17+ — true when unrestricted, i.e. neither `edge_devices.xml` (`service_capability` tag) nor a placement policy gave this host a capability list, or when `serviceIndex` is in that host's list; see §6.10). A second constructor takes the capability list explicitly (tutorial17's `SampleEdgeServerManager` passes it the `ServicePlacementPolicy` result); the original constructor still reads it from `edge_devices.xml`. **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
-| `edge_server/uav/ServicePlacementPolicy` | (tutorial17+) Decides which services (distinct `applications.xml` `service_index` values) every UAV hosts, from a policy name (`service_placement_policies` in `default_config.properties`). `place(numOfUAVs)` returns, per UAV id, its `service_index` list. Policies are a `switch` on the name, like the UAV mobility options: `SINGLE` (one service per UAV, spread as evenly as possible, UAV `i` hosts service `i % #services` — round-robin rather than contiguous blocks, since consecutive UAV ids share a datacenter/start area) and `ALL` (every UAV hosts every service). Reads the services from `SimSettings`, so per-service attributes added to `applications.xml` later (priority, size, popularity) can feed new policies without changing callers. See §6.10. |
+| `edge_server/uav/UAV` (extends `EdgeHost`) | Adds `mobilityInterval`/`speed`/`maxMoveDistance`, `SERVICE_RADIUS` (static, **shared by all UAVs**, currently `100`), `isUserInRange(Location)` (bounding-box, not circular!), `getVm()`/`getCurrentLoad()` convenience accessors, and `canServeTaskType(serviceIndex)` (tutorial17+ — true when unrestricted, i.e. neither `edge_devices.xml` (`service_capability` tag) nor a placement policy gave this host a capability list, or when `serviceIndex` is in that host's list; see §6.10). A second constructor takes the capability list explicitly (tutorial17's `SampleEdgeServerManager` passes it the `ServicePlacementPolicy` result); the original constructor still reads it from `edge_devices.xml`. RAM (§6.10 step 6): `getServiceRam()` (what the hosted services take, fixed — the constructor throws if it exceeds the RAM its VM is declared with), `getQueuedRam()` (what the running + queued tasks hold, read from the VM scheduler's exec/waiting lists), `getFreeRam()` (the VM's own RAM minus both — never the host's `<ram>`) and `hasRamFor(task, reservedRam)`. **This is the class that makes an edge host "a UAV"** — orchestrators/mobility code do `instanceof UAV` / cast to `UAV` to decide UAV-specific behavior; plain `EdgeHost` instances (tutorial1-5) are unaffected. |
+| `edge_server/uav/ServicePlacementPolicy` | (tutorial17+) Decides which services (distinct `applications.xml` `service_index` values) every UAV hosts, from a policy name (`service_placement_policies` in `default_config.properties`). `place(numOfUAVs)` returns, per UAV id, its `service_index` list. Policies are a `switch` on the name, like the UAV mobility options: `SINGLE` (one service per UAV, spread as evenly as possible, UAV `i` hosts service `i % #services` — round-robin rather than contiguous blocks, since consecutive UAV ids share a datacenter/start area) and `ALL` (every UAV hosts every service). Reads the services from `SimSettings`, so per-service attributes added to `applications.xml` later (priority, popularity) can feed new policies without changing callers. Every placement is checked against the RAM of the UAVs' VMs (`service_ram` of the hosted services vs the `<ram>` of the host's `<VM>`, never the host's own — see §6.10 step 6): `place()` throws `IllegalStateException` if one doesn't fit, and `validate(numOfUAVs)` does the same check without placing anything (tutorial17-19's `MainApp` call it up front so a sweep fails before its first scenario). A RAM-aware policy reads `SimSettings.getServiceRam(serviceIndex)` / `getVmRamOfEdgeHost(uavId)`. See §6.10. |
 
 ### `cloud_server/` — cloud infrastructure (mirrors `edge_server/`)
 `CloudServerManager` (abstract) → `DefaultCloudServerManager` (XML-driven, single `localDatacenter`), `CloudVM`, `CloudVmAllocationPolicy_Custom`.
@@ -154,7 +154,7 @@ flowchart TB
 | `MobileDeviceManager` (abstract, extends CloudSim `DatacenterBroker`) | `submitTask(TaskProperty)` is the entry point every task passes through; `getCpuUtilizationModel()`. |
 | `DefaultMobileDeviceManager` | The real task lifecycle state machine: upload → (optional) execution on assigned VM → download → logging, PLUS **task partitioning**: `submitTask` branches on `TaskProperty.isPartitionable()`, then on `SimSettings.isTaskDag(taskType)`, into either `submitPartitionableTask(...)` (flat) or `submitDagTask(...)` (layered DAG, tutorial15+ — see §6.3b). Both create a `parentTaskId`, split the task into N children (`splitTaskProperty`/`splitTaskPropertyIntoDagLayers`, currently **always an equal split** — see §7 gotchas), and submit sibling batches (one per layer, for a DAG) via the shared `submitChildTaskBatch` (calls `EdgeOrchestrator.getVmsToOffload` once per batch), tracking completion/failure in an internal `PartitionState` (upload/download delay sums, `completedChildren`/`totalChildren`, `failed` flag, plus `isDag`/`remainingLayers` for the DAG path) so the **parent** task gets exactly one aggregated log entry (see `SimLogger.taskEnded`). Any sibling failure fails the whole partition/DAG (`failPartition(...)`). |
 | `DefaultMobileDeviceManager` (streams, tutorial18+) | `submitTask` first checks for a `StreamTaskProperty` and routes it to `submitStream`: the stream is the ONE unit logged in the statistics (like a partitioned task's parent), tracked in a `StreamState` (`streamStateMap`); `releaseStreamLayer` builds every node of the next layer (`planStreamNode` - a plain `Task` or a `PreparedPartition`), has the orchestrator choose all their UAVs at once, works out the inter-layer relay delay with the same `getInterLayerRelayDelay` the sub-task DAG uses, and `startStreamLayer` then starts the nodes on those UAVs (`submitPlainTaskToVm` / `startPartitionedTask`, the latter also what `submitApplicationTask` now uses for a standalone partitioned request, with no preselected VMs) - minus the app's own `task_timeout`; `onStreamNodeEnded` (a `SimLogger.StreamNodeListener`, registered in `initialize()`) advances the layers, completes the stream after the last one or releases it when a node failed, and after a timeout waits for the running nodes before logging `TIMED_OUT` (`timeoutStream`). See §6.11. |
-| `Task` (extends CloudSim `Cloudlet`) | Adds `submittedLocation`, `creationTime`, `type`, `mobileDeviceId`, `hostIndex`/`vmIndex`/`datacenterId`, and partition bookkeeping: `partitionChild`, `parentTaskId`, `childIndex`, `childCount`. |
+| `Task` (extends CloudSim `Cloudlet`) | Adds `submittedLocation`, `creationTime`, `type`, `mobileDeviceId`, `hostIndex`/`vmIndex`/`datacenterId`, and partition bookkeeping: `partitionChild`, `parentTaskId`, `childIndex`, `childCount`. `getQueueRam()` is the RAM (MB) the task holds on a UAV while queued/running (its app's `queue_ram` / `childCount`, see §6.10 step 6). |
 | `CpuUtilizationModel_Custom` | Looks up per-app, per-tier (`EDGE_VM`/`CLOUD_VM`/`MOBILE_VM`) CPU utilization from `applications.xml` (`vm_utilization_on_*`) via `SimSettings.getTaskLookUpTable()`; `predictUtilization(vmType)` is what orchestrators call *before* binding a task to estimate fit. |
 | `edge_client/mobile_processing_unit/` (`MobileServerManager`, `DefaultMobileServerManager`, `MobileHost`, `MobileVM`, `MobileVmAllocationPolicy_Custom`) | Same abstract-manager/XML-driven pattern as edge/cloud, but models the **mobile device's own** local processing tier (used when an orchestrator decides to run a task locally instead of offloading). |
 
@@ -229,6 +229,10 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
   edge host's `edge_devices.xml` `service_capability` list references to restrict a UAV
   to this app — defaults to the app's own 0-based position in this file (the same value
   as `Task.getTaskType()`/`SimSettings.getTaskServiceIndex()`) when absent — see §6.10.
+  Optional UAV RAM costs in MB (both default to 0 = no cost, so existing files are unaffected):
+  `service_ram` (spent once on every UAV that hosts this app's service — apps sharing a
+  `service_index` must declare the same value) and `queue_ram` (held by every task of this
+  app while it is queued or running on a UAV) — see §6.10 step 6.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
@@ -677,6 +681,33 @@ placement policy (step 5, what tutorial17 uses).
    per-service attributes (priority, size, popularity) should be parsed from
    `applications.xml` into `SimSettings` (next to `taskServiceIndex`) and read there by the
    new policy cases.
+6. **UAV RAM: service cost and queue cost.** Two optional `applications.xml` tags (MB,
+   default 0 = free, so nothing changes until an app sets one) make the RAM of a UAV's VM a
+   real limit: `service_ram` is spent once on every UAV that hosts the app's service (a service
+   is a `service_index`; apps sharing one must declare the same value), `queue_ram` is held
+   by every task of the app for as long as it is queued **or running** on the UAV (a
+   partition child holds `queue_ram / childCount`, scaled like its CPU share; weights of
+   `dag_partition_weights` are ignored by both). **The budget is always the RAM of the UAV's
+   VM** (`<ram>` of its `<VM>` in `edge_devices.xml`, i.e. `UAV.getVm().getRam()`), never the
+   host's own `<ram>`: `free = vmRam - serviceRam - queuedRam`. Parsed into
+   `SimSettings` (`getTaskQueueRam`, `getServiceRam`, `getServicesRam(int[])`, and the RAM of
+   each host's VM in `getVmRamOfEdgeHost(id)` - the host's first `<VM>`, the one `UAV.getVm()`
+   returns, ordered like `edgeHostServiceCapability`). `UAV` computes its
+   `serviceRam` once (an unrestricted UAV is charged for every service) and, since it is built
+   before its VM exists, throws `IllegalArgumentException` if it exceeds the RAM the VM is
+   declared with; `getQueuedRam()` sums
+   `Task.getQueueRam()` over the VM scheduler's exec + waiting lists - nothing is booked or
+   released, so a finished task (or one that ran past its soft timeout) frees its RAM by
+   itself. Enforcement is two-fold: `UAVEdgeOrchestrator.getUAVToOffloadTo` skips a UAV that
+   `!hasRamFor(task, reservedRam)` (reserving RAM per sibling batch, like the CPU load), and
+   `DefaultMobileDeviceManager.submitTaskToVm(Task, double, Vm)` re-checks when a task reaches
+   its UAV, because a partition child/stream node is placed *before* its upload and the free
+   RAM may have changed meanwhile; it is then rejected like "no UAV found"
+   (`REJECTED_DUE_TO_VM_CAPACITY`, or `failPartition`). `ServicePlacementPolicy` refuses a
+   placement that does not fit (see §3); tutorial17-19's `MainApp` check it before the sweep.
+   A RAM rejection has no failure reason of its own - it counts as a VM-capacity rejection,
+   as a CPU one does. To make RAM the binding limit pick numbers where
+   `(vmRam - serviceRam) / queue_ram` is below the CPU bound `floor(100 / vm_utilization_on_edge)`.
 
 ### 6.11 Streams: DAGs whose nodes are applications/services (tutorial18 pattern)
 A *stream* is a request type next to the plain applications: a DAG like `dag_layers` (§6.3b),
@@ -891,6 +922,10 @@ move, so the difference shows. Two independent pieces:
   textbook blocking `rho^K(1-rho)/(1-rho^(K+1))` and mean wait to within a few percent.
   There is no queue-delay metric: the wait is folded into the processing time
   (`serviceTime - networkDelay`). `Cloudlet.getWaitingTime()` exists but nothing logs it.
+  `queue_ram` (§6.10 step 6) adds a second, independent bound on UAVs: a task is also
+  rejected when its RAM does not fit what the hosted services and the tasks already there
+  leave of the UAV's VM RAM (never the host's), so the admission limit is the stricter of the
+  CPU and RAM ones.
 - **CloudSim drops the finish event of very short tasks (fixed everywhere via
   `core/CloudletSchedulerSpaceShared_Custom`).**
   `Datacenter.processCloudletSubmit` runs `updateCloudletProcessing()` and then schedules
