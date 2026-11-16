@@ -35,9 +35,9 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
     }
 
     // ONAT: Chooses the least busy UAV in the range, taking into account any
-    // load already reserved for other sub-tasks selected earlier in the same
+    // load and RAM already reserved for other sub-tasks selected earlier in the same
     // batch (see getVmsToOffload) that haven't actually been bound to a VM yet.
-    private UAV getUAVToOffloadTo(Task task, Map<UAV, Double> reservedLoad) {
+    private UAV getUAVToOffloadTo(Task task, Map<UAV, Double> reservedLoad, Map<UAV, Double> reservedRam) {
         List<UAV> uavs = SimManager.getInstance().getEdgeServerManager().getDatacenterList().stream().flatMap(datacenter -> datacenter.getHostList().stream()).map(host -> (UAV) host).toList();
         Location senderLocation = task.getSubmittedLocation();
 
@@ -74,6 +74,11 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
             double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(uavVm.getVmType());
             if (uavLoad + taskLoad > 100.0) continue;
 
+            // ONAT: Check if the task's queue_ram fits into what is left of the UAV's VM RAM after
+            // its hosted services (service_ram), the tasks already on it, and the siblings
+            // reserved in this batch. A task without queue_ram (0) never fails this check.
+            if (!uav.hasRamFor(task, reservedRam.getOrDefault(uav, 0.0))) continue;
+
             // ONAT: Check for the least loaded UAV
             if (uavLoad > lowestLoad) continue;
 
@@ -101,16 +106,17 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
     }
 
     // ONAT: Selects UAVs for a whole batch of sibling sub-tasks at once. Each
-    // selection reserves its predicted load against the chosen UAV before the
-    // next sub-task is placed, so siblings routed to the same UAV are checked
-    // against their combined load instead of each being blind to the others.
+    // selection reserves its predicted load and queue RAM against the chosen UAV before
+    // the next sub-task is placed, so siblings routed to the same UAV are checked
+    // against their combined load/RAM instead of each being blind to the others.
     @Override
     public List<Vm> getVmsToOffload(List<Task> tasks, int deviceId) {
         Map<UAV, Double> reservedLoad = new HashMap<UAV, Double>();
+        Map<UAV, Double> reservedRam = new HashMap<UAV, Double>();
         List<Vm> selectedVMs = new ArrayList<Vm>(tasks.size());
 
         for (Task task : tasks) {
-            UAV selectedUAV = getUAVToOffloadTo(task, reservedLoad);
+            UAV selectedUAV = getUAVToOffloadTo(task, reservedLoad, reservedRam);
             if (selectedUAV == null) {
                 selectedVMs.add(null);
                 continue;
@@ -118,6 +124,7 @@ public class UAVEdgeOrchestrator extends EdgeOrchestrator
 
             double taskLoad = ((CpuUtilizationModel_Custom)task.getUtilizationModelCpu()).predictUtilization(selectedUAV.getVm().getVmType());
             reservedLoad.merge(selectedUAV, taskLoad, Double::sum);
+            reservedRam.merge(selectedUAV, task.getQueueRam(), Double::sum);
             selectedVMs.add(selectedUAV.getVm());
         }
 
