@@ -1,17 +1,20 @@
 package edu.boun.edgecloudsim.edge_server.uav;
 
 import edu.boun.edgecloudsim.core.SimSettings;
+import edu.boun.edgecloudsim.edge_client.Task;
 import edu.boun.edgecloudsim.edge_server.EdgeHost;
 import edu.boun.edgecloudsim.edge_server.EdgeVM;
 import edu.boun.edgecloudsim.utils.Location;
 import edu.boun.edgecloudsim.utils.SimLogger;
 import edu.boun.edgecloudsim.utils.SimUtils;
 import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.ResCloudlet;
 import org.cloudbus.cloudsim.VmScheduler;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.provisioners.BwProvisioner;
 import org.cloudbus.cloudsim.provisioners.RamProvisioner;
 
+import java.util.Arrays;
 import java.util.List;
 
 public class UAV extends EdgeHost {
@@ -28,6 +31,15 @@ public class UAV extends EdgeHost {
     // means UNRESTRICTED: this UAV can run every app, preserving the original "every
     // UAV can run every task" behavior.
     private final int[] serviceCapability;
+
+    // ONAT: RAM (MB) this UAV's VM spends to host its services (applications.xml's service_ram of
+    // every service in serviceCapability; an unrestricted UAV is charged for all of them).
+    // Fixed for the whole run - services are placed once, before the simulation starts.
+    private final double serviceRam;
+
+    // Allowed rounding error (MB) when comparing a task's RAM against the free RAM, since
+    // partition children hold fractional shares of their parent's queue_ram
+    private static final double RAM_EPSILON = 1e-6;
 
     /**
      * Constructs an EdgeHost with the specified resource configuration.
@@ -65,6 +77,21 @@ public class UAV extends EdgeHost {
         this.speed = 15;
         this.maxMoveDistance = this.speed * mobilityInterval;
         this.serviceCapability = serviceCapability;
+
+        this.serviceRam = SimSettings.getInstance().getServicesRam(serviceCapability);
+
+        // ONAT: the UAV is built before its VM exists, so the RAM the services must fit in is
+        // the one the VM is declared with in edge_devices.xml (the same value the VM is then
+        // created with, see getFreeRam()) - never the host's own RAM. Unknown (-1) when the
+        // host declares no VM, which getVm() reports on its own.
+        int vmRam = SimSettings.getInstance().getVmRamOfEdgeHost(id);
+        if (vmRam >= 0 && this.serviceRam > vmRam) {
+            throw new IllegalArgumentException(String.format(
+                    "UAV (Host ID: %d) runs a VM with %d MB of RAM but the services it hosts (%s) need %.1f MB (service_ram in applications.xml)",
+                    id, vmRam, serviceCapability == null || serviceCapability.length == 0
+                            ? "all of them - no service_capability given" : Arrays.toString(serviceCapability),
+                    this.serviceRam));
+        }
     }
 
     public double getMaxMoveDistance() {
@@ -124,5 +151,57 @@ public class UAV extends EdgeHost {
         // entirely (see UAVEdgeOrchestrator.getUAVToOffloadTo).
         EdgeVM vm = this.getVm();
         return vm == null ? 0.0 : vm.getTotalUtilizationOfCpu(CloudSim.clock());
+    }
+
+    /** @return RAM (MB) spent on hosting this UAV's services - fixed for the whole run */
+    public double getServiceRam() {
+        return serviceRam;
+    }
+
+    /**
+     * ONAT: RAM (MB) held by the tasks currently on this UAV - the running one and every one
+     * queued behind it (see Task.getQueueRam()). Read from the VM scheduler's own lists instead
+     * of being booked/released by hand, so a task that finishes (or runs past its timeout)
+     * frees its RAM without any bookkeeping.
+     */
+    public double getQueuedRam() {
+        EdgeVM vm = this.getVm();
+        return vm == null ? 0.0 : getQueuedRam(vm);
+    }
+
+    private static double getQueuedRam(EdgeVM vm) {
+        double queuedRam = 0.0;
+        for (ResCloudlet rcl : vm.getCloudletScheduler().<ResCloudlet>getCloudletExecList()) {
+            queuedRam += getQueueRam(rcl);
+        }
+        for (ResCloudlet rcl : vm.getCloudletScheduler().<ResCloudlet>getCloudletWaitingList()) {
+            queuedRam += getQueueRam(rcl);
+        }
+        return queuedRam;
+    }
+
+    private static double getQueueRam(ResCloudlet rcl) {
+        return rcl.getCloudlet() instanceof Task ? ((Task) rcl.getCloudlet()).getQueueRam() : 0.0;
+    }
+
+    /**
+     * ONAT: RAM (MB) of this UAV's VM that is taken by neither the hosted services nor the tasks
+     * currently on it. The budget is the VM's own RAM (edge_devices.xml's &lt;ram&gt; of the &lt;VM&gt;),
+     * not the host's: everything a UAV runs lives in that VM. A UAV without a VM has none.
+     */
+    public double getFreeRam() {
+        EdgeVM vm = this.getVm();
+        return vm == null ? 0.0 : vm.getRam() - serviceRam - getQueuedRam(vm);
+    }
+
+    /**
+     * @param task          the task to hold RAM on this UAV
+     * @param reservedRam   RAM (MB) already promised to other tasks that are not on this UAV
+     *                      yet (e.g. earlier siblings of the same placement batch)
+     * @return true if the task's queue RAM fits in what is free on this UAV
+     */
+    public boolean hasRamFor(Task task, double reservedRam) {
+        double taskRam = task.getQueueRam();
+        return taskRam <= 0 || taskRam <= getFreeRam() - reservedRam + RAM_EPSILON;
     }
 }
