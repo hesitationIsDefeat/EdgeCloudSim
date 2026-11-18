@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<events>
+	<!-- ONAT: SILENT CROWD - the biggest crowd is NOT where the demand is. It tests whether a
+	     policy follows the REQUESTS (and the services they need) or only the people, and whether
+	     UAVs of DIFFERENT services can be brought together - which a stream needs.
+	       - TOWN_SQUARE (VIDEO_APP, service 0): the whole map comes to the middle (attraction radius
+	         450 m, 90% of the users, so ~460 people at 800 users on 100 m) but each of them asks only
+	         once in ~13 minutes: about 0.6 requests/s in total, a fraction of one UAV. A crowd that
+	         pulls every service-blind policy (they follow users) and hardly needs anything: one UAV
+	         hosting service 0 at its center is enough.
+	       - CHEMICAL_LEAK (RESCUE_STREAM = DETECT -> (MAP, VIDEO) -> ALERT, all 4 services, 300-900 s), in
+	         the south-east corner, far from the crowd (520 m): ~80 people at 800 users, but every request is a
+	         stream and needs a UAV of EACH of the 4 services within 100 m of it at the same time, or it
+	         fails (30 s timeout). The 4 UAVs have to be different ones, stacked on the same spot -
+	         exactly what a policy that spreads UAVs apart by their positions works against, and what
+	         "UAVs of different services may stack" (SERVICE_APF's overlap-aware repulsion) is for.
+	       - POWER_OUTAGE (TRAFFIC_STREAM = MAP -> ALERT, 1000-1600 s), in the opposite, north-west corner
+	         (1050 m from the leak): after a 100 s pause the demand jumps across the whole map and
+	         changes its services: only MAP and ALERT UAVs are wanted there, so the VIDEO UAV may stay
+	         with the square and the DETECT UAVs have nothing to do. A UAV needs ~70 s to make the trip at
+	         15 m/s, longer than service_demand_window (60 s): a policy can only be early if it
+	         moves before the demand is fully there - try service_demand_lookahead (an oracle) to see how
+	         much of the loss is that delay.
+	     What to look for: the streams' failure rate per policy (the stream plots), UAVs hosting the
+	     missing services appearing at the corner, and the VIDEO requests of the square still being
+	     served (no UAV hosting service 0 left within reach of it is the price of an emergency elsewhere).
+	     At 800 users the leak makes ~0.8 streams/s and the outage ~0.8 streams/s, each needing ~0.65 of a
+	     UAV of every service involved; at 200 users there are only 13 and 21 people at the corners.
+	     All times in simulation seconds (1800 s in total). -->
+
+	<event name="TOWN_SQUARE">
+		<start_time>200</start_time>
+		<end_time>1700</end_time>
+		<x_pos>500</x_pos>
+		<y_pos>500</y_pos>
+		<radius>100</radius>
+		<attraction_radius>450</attraction_radius>
+		<participation>0.9</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>800</poisson_interarrival>
+	</event>
+
+	<event name="CHEMICAL_LEAK">
+		<start_time>300</start_time>
+		<end_time>900</end_time>
+		<x_pos>870</x_pos>
+		<y_pos>130</y_pos>
+		<radius>80</radius>
+		<attraction_radius>250</attraction_radius>
+		<participation>0.9</participation>
+		<request>RESCUE_STREAM</request>
+		<poisson_interarrival>100</poisson_interarrival>
+	</event>
+
+	<event name="POWER_OUTAGE">
+		<start_time>1000</start_time>
+		<end_time>1600</end_time>
+		<x_pos>130</x_pos>
+		<y_pos>870</y_pos>
+		<radius>80</radius>
+		<attraction_radius>250</attraction_radius>
+		<participation>0.9</participation>
+		<request>TRAFFIC_STREAM</request>
+		<poisson_interarrival>60</poisson_interarrival>
+	</event>
+</events>
