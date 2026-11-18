@@ -119,6 +119,7 @@ flowchart TB
 |---|---|
 | `events/WorldEvent` | Immutable description of a **world event** - something that happens at a place for a while and makes the people around it request one thing: `name`, `start`/`end` (simulation seconds), a center (`x`,`y`), `radius` (users request only while within it), `attractionRadius` (users within it when the event starts may be drawn to it), `participation` (probability of such a user being drawn), and the request - an application or stream NAME (resolved to a task type with `SimSettings.getTaskTypeByName`) and its `requestInterarrival` (mean seconds between one user's requests while inside). Validates its arguments (unknown request name, `end <= start`, radii, ...) with a clear message; `toLogLine(index)` is the `EVENTS.log` row. Events are plain data: the scenario's `events.xml` (read by `WorldEventLoader`) decides which exist, and its mobility model and load generator act on them - see §6.12. |
 | `events/WorldEventLoader` | (tutorial19+) `load(path)` reads an `events.xml` - one `<event name="...">` per event that will happen, each with `start_time`, `end_time`, `x_pos`, `y_pos`, `radius`, `request`, `poisson_interarrival` and the optional `attraction_radius` (default: `radius`) and `participation` (default 1) - into `WorldEvent`s, in file order. Nothing about the events is random. Strict on purpose: a missing/unknown/repeated tag, a non-number, an unknown request name, a repeated or empty event name, a center outside the `*_bound` area or an empty file throws an `IllegalArgumentException` naming the event (`MainApp` prints it and stops), so a typo cannot silently change an experiment. Must run after `SimSettings.initialize` (requests are resolved against `applications.xml`/`streams.xml`). |
+| `events/EventsFiles` | (tutorial19+) A tutorial can have several events files: `discover(configFolder, tutorialKey, namesFilePath)` returns an `Entry` (`getName()`, `getPath()`) for every `events*.xml` of its config folder, sorted by file name, each with the name it is run under - the value of `<tutorial>.<file name without .xml>` in `config/event_names.properties` (like `tutorial_names.properties` for tutorials; last duplicate wins, as `java.util.Properties`), or the file name without `.xml` when it has no line. The name is the folder the run's results go to, so it may only contain letters, digits, `_`, `-` and `.` and must be unique within the tutorial (`IllegalArgumentException` otherwise); `single(path)` wraps the one file a command-line run is given. |
 
 ### `network/` — delay modeling
 | Class | Role |
@@ -132,7 +133,7 @@ flowchart TB
 |---|---|
 | `EdgeOrchestrator` (abstract `SimEntity`) | `initialize()`, `getDeviceToOffload(Task)` (cloud vs edge vs mobile, returns a device-type constant), `getVmToOffload(Task, deviceId)` (pick one VM), and `getVmsToOffload(List<Task>, deviceId)` (**batch** selection for sibling sub-tasks of a partitioned task — default impl just loops `getVmToOffload`; override this if your placement needs to see the whole batch's cumulative load before committing, as `UAVEdgeOrchestrator` does). |
 | `BasicEdgeOrchestrator` | Implements `FIRST_FIT`/`NEXT_FIT`/`BEST_FIT`/`WORST_FIT`/`RANDOM_FIT` VM selection, location-aware (`selectVmOnHost`) or global-load-balanced (`selectVmOnLoadBalancer`, only in `TWO_TIER_WITH_EO` scenario) placement on the edge tier, worst-fit-by-capacity on cloud. Policy name comes from `orchestrator_policies` config and is read via `this.policy`. |
-| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10) **AND that has the RAM for the task** (`UAV.hasRamFor()` — `queue_ram`, see §6.10 step 6; always true while no app sets it). Overrides `getVmsToOffload` to reserve predicted load **and queue RAM** per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
+| `edge_orchestrator/uav/UAVEdgeOrchestrator` | Always offloads to the (generic) edge tier; picks the least-loaded **UAV whose `SERVICE_RADIUS` covers the requesting user's location AND that is declared capable of the task's app** (`UAV.canServeTaskType()` — see §6.10) **AND whose VM has the RAM for the task** (`UAV.hasRamFor()`, see §6.10 step 6). **RAM is the only admission check** (tutorial6-19): a task is queued/run on a UAV only if its `queue_ram` fits what the VM has left after the hosted services' `service_ram` and the tasks already there — `vm_utilization_on_edge` no longer admits or rejects anything, it only measures how loaded a UAV is (running + waiting + reserved CPU shares) for the "least loaded" choice and feeds the utilization results. `initialize()` refuses to start (`IllegalArgumentException`) if any application has no `queue_ram` above 0, since a task with no RAM cost would never be rejected. Overrides `getVmsToOffload` to reserve predicted load **and queue RAM** per UAV across a whole sibling batch before binding any of them (avoids over-committing one UAV with several sub-tasks from the same parent task). |
 
 ### `edge_server/` — edge (and UAV) infrastructure
 | Class | Role |
@@ -155,7 +156,7 @@ flowchart TB
 | `DefaultMobileDeviceManager` | The real task lifecycle state machine: upload → (optional) execution on assigned VM → download → logging, PLUS **task partitioning**: `submitTask` branches on `TaskProperty.isPartitionable()`, then on `SimSettings.isTaskDag(taskType)`, into either `submitPartitionableTask(...)` (flat) or `submitDagTask(...)` (layered DAG, tutorial15+ — see §6.3b). Both create a `parentTaskId`, split the task into N children (`splitTaskProperty`/`splitTaskPropertyIntoDagLayers`, currently **always an equal split** — see §7 gotchas), and submit sibling batches (one per layer, for a DAG) via the shared `submitChildTaskBatch` (calls `EdgeOrchestrator.getVmsToOffload` once per batch), tracking completion/failure in an internal `PartitionState` (upload/download delay sums, `completedChildren`/`totalChildren`, `failed` flag, plus `isDag`/`remainingLayers` for the DAG path) so the **parent** task gets exactly one aggregated log entry (see `SimLogger.taskEnded`). Any sibling failure fails the whole partition/DAG (`failPartition(...)`). |
 | `DefaultMobileDeviceManager` (streams, tutorial18+) | `submitTask` first checks for a `StreamTaskProperty` and routes it to `submitStream`: the stream is the ONE unit logged in the statistics (like a partitioned task's parent), tracked in a `StreamState` (`streamStateMap`); `releaseStreamLayer` builds every node of the next layer (`planStreamNode` - a plain `Task` or a `PreparedPartition`), has the orchestrator choose all their UAVs at once, works out the inter-layer relay delay with the same `getInterLayerRelayDelay` the sub-task DAG uses, and `startStreamLayer` then starts the nodes on those UAVs (`submitPlainTaskToVm` / `startPartitionedTask`, the latter also what `submitApplicationTask` now uses for a standalone partitioned request, with no preselected VMs) - minus the app's own `task_timeout`; `onStreamNodeEnded` (a `SimLogger.StreamNodeListener`, registered in `initialize()`) advances the layers, completes the stream after the last one or releases it when a node failed, and after a timeout waits for the running nodes before logging `TIMED_OUT` (`timeoutStream`). See §6.11. |
 | `Task` (extends CloudSim `Cloudlet`) | Adds `submittedLocation`, `creationTime`, `type`, `mobileDeviceId`, `hostIndex`/`vmIndex`/`datacenterId`, and partition bookkeeping: `partitionChild`, `parentTaskId`, `childIndex`, `childCount`. `getQueueRam()` is the RAM (MB) the task holds on a UAV while queued/running (its app's `queue_ram` / `childCount`, see §6.10 step 6). |
-| `CpuUtilizationModel_Custom` | Looks up per-app, per-tier (`EDGE_VM`/`CLOUD_VM`/`MOBILE_VM`) CPU utilization from `applications.xml` (`vm_utilization_on_*`) via `SimSettings.getTaskLookUpTable()`; `predictUtilization(vmType)` is what orchestrators call *before* binding a task to estimate fit. |
+| `CpuUtilizationModel_Custom` | Looks up per-app, per-tier (`EDGE_VM`/`CLOUD_VM`/`MOBILE_VM`) CPU utilization from `applications.xml` (`vm_utilization_on_*`) via `SimSettings.getTaskLookUpTable()`; `predictUtilization(vmType)` is what the non-UAV orchestrators call *before* binding a task to estimate fit. `UAVEdgeOrchestrator` (tutorial6-19) no longer uses it to admit anything (RAM does, §6.10 step 6) — only to rank UAVs by load. |
 | `edge_client/mobile_processing_unit/` (`MobileServerManager`, `DefaultMobileServerManager`, `MobileHost`, `MobileVM`, `MobileVmAllocationPolicy_Custom`) | Same abstract-manager/XML-driven pattern as edge/cloud, but models the **mobile device's own** local processing tier (used when an orchestrator decides to run a task locally instead of offloading). |
 
 ### `utils/` — shared data & helpers
@@ -181,10 +182,10 @@ flowchart TB
 | `tutorial8` | Adds the **SAR (Search & Rescue) scenario**: a second fixed-size device population with its own mobility (`SARTeamMobilityModel`), its own reserved app subset (`SARAwareLoadGenerator`), sharing the device-id space with normal users via `CombinedMobilityModel`. See [/memories/repo/tutorial8_sar_scenario.md](/memories/repo/tutorial8_sar_scenario.md) for the deep-dive notes on this scenario (build/run commands, plotting scripts, the `LOCAL_FORCE` UAV policy, known pre-existing script bugs). |
 | `tutorial9` | A full copy of tutorial8's wiring (same 6 Java classes, package `edu.boun.edgecloudsim.applications.tutorial9`, `APPLICATION_FOLDER = "tutorial9"`) whose `default_config.properties` sweeps **only VORONOI policy variants** (`uav_mobility_options=VORONOI,VORONOI_2,VORONOI_4`) to compare SAR priority factors under one batch run - see §6.2 and the `tutorial8_sar_scenario` memory note for how `VORONOI_<factor>` naming works. |
 | `tutorial15` | A copy of tutorial14's wiring (normal users only - no SAR, centralized UAV mobility fixed to `PRIORITY_KMEANS`, same `SARAwareLoadGenerator`/`CombinedMobilityModel` structural parity) demonstrating **DAG-structured task partitioning**: `applications.xml`'s single `DAG_WORKFLOW` app sets `dag_layers=1,2,1` (1 entry sub-task -> 2 parallel -> 1 final sub-task) and `dag_partition_weights=0.1, (0.4, 0.4), 0.1`, swept against `task_partition_policies=NO,FULL,FULL_LAYERED,FULL_WEIGHTED,FULL_(0.1,(0.2,0.6),0.1),PARTITION_4` (`NO` runs it as one flat unpartitioned task; `FULL` runs the real layered DAG split EQUALLY across every sub-task regardless of layer; `FULL_LAYERED` runs the SAME real layered DAG but split equally across layers first and then equally again within each layer, via a `partition_strategy` override - see §6.3b; `FULL_WEIGHTED` runs the SAME real layered DAG but split per the app's explicit `dag_partition_weights`, via a `partition_strategy` override to `DAG_PARTITION_STRATEGY_WEIGHTED` - see §6.3d; `FULL_(<weights>)` runs the SAME real layered DAG but split per weights encoded directly in the policy name itself, ignoring the app's own `dag_partition_weights` for that run - see §6.3d point 5; `PARTITION_4` forces a flat 4-way split ignoring `dag_layers` entirely). See §6.3b/§6.3d. Users converge onto a **single meeting zone at the map center** (`CombinedMobilityModel` passes `ConvergingMobilityModel`'s new 4-arg constructor a one-entry `{500,500}` area, instead of the default 3 areas every other tutorial sharing that class still uses), and `max_number_of_mobile_devices=1000` (other tutorials in this family default to 800). |
-| `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`). It sweeps the number of users (`min`/`max_number_of_mobile_devices`) and, like tutorial15's `task_partition_policies`, a list of **VM utilization policies**: `vm_utilization_policies=UTILIZATION_10,UTILIZATION_30,UTILIZATION_50,...` in `default_config.properties` — each entry is a policy name `UTILIZATION_<percent>` (decimals allowed) whose value `MainApp` writes into every app's `vm_utilization_on_edge` for that run via `SimSettings.setEdgeVmUtilization()` (applications.xml's own value is only a placeholder), so several utilizations land in the same plot as separate lines (same "numeric parameter encoded in the policy name" convention as `PARTITION_<N>`, §6.2 point 8). A missing list or an entry that isn't `UTILIZATION_<percent>` aborts the run up front. Results go to `sim_results/tutorial16/ite<N>/SIMRESULT_<scenario>_<orchestrator>_UTILIZATION_<percent>_<users>DEVICES_*`. No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. With the default 1 task per user per 100 s and mean 1 s service the offered load is users/100; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. `python/` is tutorial15's plotting folder copied as-is (`plot.sh` + `plotAvg*.py`), adapted only so the scenarios/legends come from `vm_utilization_policies` (legend "30% Utilization"; x axis is the number of clients). |
+| `tutorial16` | **Single-UAV queue study** (see §7 for the M/M/1/K reading): the same single-center user mobility and `PRIORITY_KMEANS` UAV mobility as tutorial15, but exactly ONE UAV (`edge_devices.xml`: one host, one 1-core 2500-MIPS VM) and ONE non-partitionable app (`QUEUE_TASK`). It sweeps the number of users (`min`/`max_number_of_mobile_devices`) and, like tutorial15's `task_partition_policies`, a list of **queue RAM policies**: `queue_ram_policies=QUEUE_RAM_700,QUEUE_RAM_2100,QUEUE_RAM_7000,...` in `default_config.properties` — each entry is a policy name `QUEUE_RAM_<MB>` (decimals allowed) whose value `MainApp` writes into every app's `queue_ram` for that run via `SimSettings.setQueueRam()` (applications.xml's own value is only a placeholder), so several RAM footprints land in the same plot as separate lines (same "numeric parameter encoded in the policy name" convention as `PARTITION_<N>`, §6.2 point 8). A UAV admits by RAM alone, so the VM (8000 MB) minus the service (`service_ram` 1000 MB) holds `K = floor(7000 / queue_ram)` tasks (the shipped list gives K = 10, 5, 3, 2, 1). A missing list or an entry that isn't `QUEUE_RAM_<MB>` aborts the run up front. Results go to `sim_results/tutorial16/ite<N>/SIMRESULT_<scenario>_<orchestrator>_QUEUE_RAM_<MB>_<users>DEVICES_*`. No SAR and no partitioning, so it uses the core `IdleActiveLoadGenerator` and tutorial6's `ConvergingMobilityModel` directly instead of tutorial15's `SARAwareLoadGenerator`/`CombinedMobilityModel`. With the default 1 task per user per 100 s and mean 1 s service the offered load is users/100; `deep_file_log_enabled=true` so per-task `*_SUCCESS.log`/`*_FAIL.log` and a 0.3 s `*_VM_LOAD.log` are written. `python/` is tutorial15's plotting folder copied as-is (`plot.sh` + `plotAvg*.py`), adapted only so the scenarios/legends come from `queue_ram_policies` (legend "2100 MB per task"; x axis is the number of clients). |
 | `tutorial17` | Compares **service placement policies** (§6.10): which application services each UAV hosts is decided by a `ServicePlacementPolicy` swept via `service_placement_policies` in `default_config.properties` (currently `SINGLE,ALL`) instead of hard-coded per-host `service_capability` lists. `applications.xml` defines 4 otherwise-identical apps (`SERVICE_APP_0..3`, each `usage_percentage=25`), one per explicit `service_index` (0-3); `edge_devices.xml` (16 UAVs, tutorial10's 4-datacenter/4-host-each corner layout) declares no `service_capability` at all. `SINGLE` gives each UAV exactly one service (16 UAVs / 4 services = 4 UAVs per service, interleaved so every datacenter's UAVs host different services), `ALL` gives every UAV every service. `UAVEdgeOrchestrator`/`UAV.canServeTaskType()` enforce the result on every placement decision - a task whose service is hosted by no in-range, non-full UAV is rejected (`REJECTED_DUE_TO_VM_CAPACITY`). `MainApp` sweeps placement policy as the innermost loop (inside the UAV mobility option), `SIMRESULT_*` file names gain a `_<PLACEMENT>` segment after the mobility option, and the python plot lines are the placement policies (`config.py` holds the first `uav_mobility_options` entry fixed, and warns if more are listed). Users move with a plain, non-converging random walk (tutorial6's `SampleMobilityModel`, reused directly - no `ConvergingMobilityModel`/meeting zone), while `uav_mobility_options` sweeps every real `CentralizedUAVMobility` policy EXCEPT `NO`/`RANDOM`: `PRIORITY_KMEANS,APF,CAPACITY_FILL,ADAPTIVE_KMEANS` (see §6.2). No SAR, no partitioning - uses the core `IdleActiveLoadGenerator` directly, same non-SAR structure as tutorial16. |
 | `tutorial18` | tutorial17's service-placement scenario (same random-walk users, 16-UAV `edge_devices.xml`, `SINGLE,ALL` placement sweep, centralized UAV mobility) plus **streams** (§6.11). Takes a 6th `MainApp` argument, `streams.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 4th `;` field). `applications.xml`: `SERVICE_APP_0` (plain, `usage_percentage` 20, with its own `task_timeout` that only applies standalone), `SERVICE_APP_1` (`usage_percentage` 20 and itself a `dag_layers=1,2,1` DAG of sub-tasks, so it runs as that DAG both alone and as a stream node), `SERVICE_APP_2`/`SERVICE_APP_3` (`usage_percentage` 0 - stream nodes only). `streams.xml`: `SURVEILLANCE_STREAM` (30%, `1,2,1`: `SERVICE_APP_0, (SERVICE_APP_1, SERVICE_APP_2), SERVICE_APP_3`, own 20 s timeout, 60 s active / 30 s idle) and `MONITORING_STREAM` (30%, `1,1`, no timeout, always active); applications' 40% + streams' 60% = 100. Uses `IdleActiveStreamLoadGenerator`. Statistics gain one `<STREAM_NAME>_GENERIC.log` per stream next to the per-app ones (only apps/streams with `usage_percentage` > 0 get a file, so the stream-only `SERVICE_APP_2/3` have none), `ALL_APPS_GENERIC.log` aggregates ONLY the applications requested on their own and `ALL_STREAMS_GENERIC.log` only the streams (§6.11 point 4). `python/` is tutorial17's plotting folder made group-aware: every plot is produced twice, into `<output>/applications/` (the overall `ALL_APPS` plot + one per standalone application) and `<output>/streams/` (overall `ALL_STREAMS` + one per stream) - see `config.get_plot_groups()`; applications that are only stream nodes get no application plots, and a stream's nodes never count in the application plots. |
-| `tutorial19` | **Service-aware UAV mobility under world events** (§6.12): compares the service-blind `PRIORITY_KMEANS` baseline with `SERVICE_KMEANS`, `SERVICE_APF` and `SERVICE_CAPACITY_FILL` (`uav_mobility_options`; `service_placement_policies=SINGLE` - each of the 16 UAVs hosts ONE of 4 services, so where a UAV is matters). Built from tutorial18 (`streams.xml`, `IdleActiveStreamLoadGenerator` base) with a 7th `MainApp` argument, `events.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 5th `;` field; `plot.sh` copies it to the results). Users do not request in their own time: `event_requests_only=true` makes them request ONLY while inside the radius of an active **world event**, and only that event's request; `event_gather=true` makes the crowd walk to the events. `events.xml` lists 7 events, one `<event>` each (radius 100 m, attraction radius 450 m, participation 50%, 200-1800 s, overlapping in time, far apart, each asking for a different set of services: `CONCERT`→`VIDEO_APP`, `WILDFIRE`→`FIRE_STREAM`, `ACCIDENT`→`TRAFFIC_STREAM`, `MATCH`→`BROADCAST_STREAM`, `FLOOD`→`DETECT_APP`, `PARADE`→`MAP_APP`, `STORM`→`RESCUE_STREAM`). `EventMobilityModel` (users) and `EventLoadGenerator` (requests) implement the events; `applications.xml` has 4 identical-workload applications, one per service; `streams.xml` has 4 streams (`RESCUE_STREAM` `1,2,1`, `FIRE_STREAM` `1,2`, `TRAFFIC_STREAM` `1,1`, `BROADCAST_STREAM` `2`) needing 2-4 services at once. Their `usage_percentage` etc. only matter when `event_requests_only=false` (they are then the users' normal pattern, adding up to 100, and the events' requests come on top). Writes `_EVENTS.log`. `python/` is tutorial18's group-aware plotting folder with one line per MOBILITY policy (instead of per placement policy), `plotTaskFailureReason.py` enabled (VM capacity - which also counts "no in-range UAV hosts the service" - and bandwidth) and `plotUserLocationHeatmapVideo.py` rewritten: it draws the events from `EVENTS.log` (solid circle = request radius, dashed = attraction radius, label with the request and the number of users inside) and colors every UAV by the service it hosts. |
+| `tutorial19` | **Service-aware UAV mobility under world events** (§6.12): compares the service-blind `PRIORITY_KMEANS` baseline with `SERVICE_KMEANS`, `SERVICE_APF` and `SERVICE_CAPACITY_FILL` (`uav_mobility_options`; `service_placement_policies=SINGLE` - each of the 16 UAVs hosts ONE of 4 services, so where a UAV is matters). Built from tutorial18 (`streams.xml`, `IdleActiveStreamLoadGenerator` base) with a 7th `MainApp` argument, `events.xml` (`runner.sh`/`run_scenarios.sh`/`simulation.list` carry it as a 5th `;` field; `plot.sh` copies it to its event's results folder). A tutorial can have several events files (`events*.xml`): the whole tutorial is run once for each, with the results kept in a folder named after the file in `config/event_names.properties` (§6.12 point 3). Users do not request in their own time: `event_requests_only=true` makes them request ONLY while inside the radius of an active **world event**, and only that event's request; `event_gather=true` makes the crowd walk to the events. `events.xml` lists 7 events, one `<event>` each (radius 100 m, attraction radius 450 m, participation 50%, 200-1800 s, overlapping in time, far apart, each asking for a different set of services: `CONCERT`→`VIDEO_APP`, `WILDFIRE`→`FIRE_STREAM`, `ACCIDENT`→`TRAFFIC_STREAM`, `MATCH`→`BROADCAST_STREAM`, `FLOOD`→`DETECT_APP`, `PARADE`→`MAP_APP`, `STORM`→`RESCUE_STREAM`). `EventMobilityModel` (users) and `EventLoadGenerator` (requests) implement the events; `applications.xml` has 4 identical-workload applications, one per service; `streams.xml` has 4 streams (`RESCUE_STREAM` `1,2,1`, `FIRE_STREAM` `1,2`, `TRAFFIC_STREAM` `1,1`, `BROADCAST_STREAM` `2`) needing 2-4 services at once. Their `usage_percentage` etc. only matter when `event_requests_only=false` (they are then the users' normal pattern, adding up to 100, and the events' requests come on top). Writes `_EVENTS.log`. `python/` is tutorial18's group-aware plotting folder with one line per MOBILITY policy (instead of per placement policy), `plotTaskFailureReason.py` enabled (VM capacity - which also counts "no in-range UAV hosts the service" - and bandwidth) and `plotUserLocationHeatmapVideo.py` rewritten: it draws the events from `EVENTS.log` (solid circle = request radius, dashed = attraction radius, label with the request and the number of users inside), colors every UAV by the service it hosts, and shows under the map a timeline of the events (a colored symbol on a vertical line at each event's start, and a dot moving with the video's time). |
 
 Each tutorial folder has its own `MainApp` (sweep loop over device counts / scenarios /
 orchestrator policies / [task-partition policies] / [UAV mobility options]) and its own
@@ -198,7 +199,7 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
 - **`default_config.properties`** — flat key=value. Comma-separated values become sweep
   axes in `MainApp` (e.g. `orchestrator_policies`, `simulation_scenarios`,
   `task_partition_policies` [tutorial7+], `uav_mobility_options` [tutorial6+],
-  `vm_utilization_policies` [tutorial16 - `UTILIZATION_<percent>` entries, see §4],
+  `queue_ram_policies` [tutorial16 - `QUEUE_RAM_<MB>` entries, see §4],
   `service_placement_policies` [tutorial17 - `SINGLE`/`ALL`, see §6.10; defaults to `ALL`]). New scalar
   knobs (like tutorial8's `sar_*` keys) should default to a harmless value (0/empty) so
   older tutorials that don't set them are unaffected — see `SimSettings` SAR fields for
@@ -229,10 +230,12 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
   edge host's `edge_devices.xml` `service_capability` list references to restrict a UAV
   to this app — defaults to the app's own 0-based position in this file (the same value
   as `Task.getTaskType()`/`SimSettings.getTaskServiceIndex()`) when absent — see §6.10.
-  Optional UAV RAM costs in MB (both default to 0 = no cost, so existing files are unaffected):
-  `service_ram` (spent once on every UAV that hosts this app's service — apps sharing a
-  `service_index` must declare the same value) and `queue_ram` (held by every task of this
-  app while it is queued or running on a UAV) — see §6.10 step 6.
+  UAV RAM costs in MB: `service_ram` (spent once on every UAV that hosts this app's service —
+  apps sharing a `service_index` must declare the same value) and `queue_ram` (held by every
+  task of this app while it is queued or running on a UAV). Both default to 0 when absent, but
+  every scenario that uses `UAVEdgeOrchestrator` (tutorial6-19) **requires `queue_ram` > 0 on
+  every application** and refuses to start otherwise — see §6.10 step 6. The values shipped with
+  tutorial6-19 follow how heavy each app is and are the same wherever an app appears.
 - **`edge_devices.xml`** — `<datacenter>` → `<host>` → `<VM>` hierarchy consumed by
   `DefaultEdgeServerManager`/`DefaultCloudServerManager` to build CloudSim
   hosts/VMs, plus per-datacenter `Location`/place-type/attractiveness info consumed by
@@ -260,7 +263,11 @@ Each tutorial's `scripts/tutorialN/config/` has three files (four from tutorial1
   application or stream NAME) and `poisson_interarrival` (mean seconds between one user's requests
   inside); optional `attraction_radius` (m, at least `radius`, default `radius`: users within it
   when the event starts may walk to it with `event_gather`) and `participation` ([0,1], default 1:
-  the share of those users that go). See §6.12.
+  the share of those users that go). There can be several such files in a tutorial's `config/`
+  (`events.xml`, `events_<anything>.xml`): the whole tutorial is run once for each, and each run
+  keeps its results in a folder named after its file in the root
+  `config/event_names.properties` (`tutorial19.events_storm=StormSeason`; see `events/EventsFiles`).
+  See §6.12.
 
 ## 6. Cookbook — "How do I add a new ___?"
 
@@ -376,9 +383,9 @@ dependencies from 2+ layers back - a "simple" DAG).
    (`failPartition`), same semantics as flat partitioning — there is no partial-DAG
    success.
 3. `task.getChildCount()` (read by `CpuUtilizationModel_Custom` to divide
-   `vm_utilization_on_*` per sub-task) is set to the DAG's TOTAL sub-task count across
+   `vm_utilization_on_*` per sub-task, and by `Task.getQueueRam()` to divide `queue_ram`) is set to the DAG's TOTAL sub-task count across
    every layer for every child, regardless of which layer it's in — so e.g. `dag_layers=
-   1,2,1` (4 total) divides the raw utilization by 4 for every sub-task, exactly as a
+   1,2,1` (4 total) divides the raw utilization and the queue RAM by 4 for every sub-task, exactly as a
    flat 4-way partition would.
 4. `task_partition_policies=NO` still disables partitioning entirely for a DAG app too
    (`isTaskPartitionable` returns `false` before `isTaskDag` is ever consulted) — the task
@@ -681,21 +688,27 @@ placement policy (step 5, what tutorial17 uses).
    per-service attributes (priority, size, popularity) should be parsed from
    `applications.xml` into `SimSettings` (next to `taskServiceIndex`) and read there by the
    new policy cases.
-6. **UAV RAM: service cost and queue cost.** Two optional `applications.xml` tags (MB,
-   default 0 = free, so nothing changes until an app sets one) make the RAM of a UAV's VM a
-   real limit: `service_ram` is spent once on every UAV that hosts the app's service (a service
-   is a `service_index`; apps sharing one must declare the same value), `queue_ram` is held
-   by every task of the app for as long as it is queued **or running** on the UAV (a
-   partition child holds `queue_ram / childCount`, scaled like its CPU share; weights of
-   `dag_partition_weights` are ignored by both). **The budget is always the RAM of the UAV's
-   VM** (`<ram>` of its `<VM>` in `edge_devices.xml`, i.e. `UAV.getVm().getRam()`), never the
-   host's own `<ram>`: `free = vmRam - serviceRam - queuedRam`. Parsed into
+6. **UAV RAM: service cost and queue cost - the only thing that bounds a UAV's queue.** Two
+   `applications.xml` tags (MB) make the RAM of a UAV's VM the real limit: `service_ram` is
+   spent once on every UAV that hosts the app's service (a service is a `service_index`; apps
+   sharing one must declare the same value), `queue_ram` is held by every task of the app for
+   as long as it is queued **or running** on the UAV (a partition child holds
+   `queue_ram / childCount`; weights of `dag_partition_weights` are ignored by this, as they
+   are by the CPU share). **Every scenario that uses `UAVEdgeOrchestrator` (tutorial6-19) needs
+   a `queue_ram` above 0 on every application** - `UAVEdgeOrchestrator.initialize()` throws
+   otherwise, because a task with no RAM cost could never be rejected and its queue would grow
+   without bound. `service_ram` may be 0, but every shipped file sets both. **The budget is
+   always the RAM of the UAV's VM** (`<ram>` of its `<VM>` in `edge_devices.xml`, i.e.
+   `UAV.getVm().getRam()`, 8000 MB in every tutorial), never the host's own `<ram>`:
+   `free = vmRam - serviceRam - queuedRam`, so a UAV holds
+   `floor((vmRam - hostedServiceRam) / queue_ram)` tasks of one kind (1 running, the rest
+   queued). Parsed into
    `SimSettings` (`getTaskQueueRam`, `getServiceRam`, `getServicesRam(int[])`, and the RAM of
    each host's VM in `getVmRamOfEdgeHost(id)` - the host's first `<VM>`, the one `UAV.getVm()`
    returns, ordered like `edgeHostServiceCapability`). `UAV` computes its
-   `serviceRam` once (an unrestricted UAV is charged for every service) and, since it is built
-   before its VM exists, throws `IllegalArgumentException` if it exceeds the RAM the VM is
-   declared with; `getQueuedRam()` sums
+   `serviceRam` once (an unrestricted UAV - tutorial6-16 - is charged for every service) and,
+   since it is built before its VM exists, throws `IllegalArgumentException` if it exceeds the
+   RAM the VM is declared with; `getQueuedRam()` sums
    `Task.getQueueRam()` over the VM scheduler's exec + waiting lists - nothing is booked or
    released, so a finished task (or one that ran past its soft timeout) frees its RAM by
    itself. Enforcement is two-fold: `UAVEdgeOrchestrator.getUAVToOffloadTo` skips a UAV that
@@ -703,11 +716,30 @@ placement policy (step 5, what tutorial17 uses).
    `DefaultMobileDeviceManager.submitTaskToVm(Task, double, Vm)` re-checks when a task reaches
    its UAV, because a partition child/stream node is placed *before* its upload and the free
    RAM may have changed meanwhile; it is then rejected like "no UAV found"
-   (`REJECTED_DUE_TO_VM_CAPACITY`, or `failPartition`). `ServicePlacementPolicy` refuses a
+   (`REJECTED_DUE_TO_VM_CAPACITY`, or `failPartition`). A partition child keeps its parent's
+   task type, so a UAV that hosts the parent's service is eligible for every one of its children
+   (`UAV.canServeTaskType`), and an in-range one takes them as far as its RAM goes. A stream node is
+   not a partition of the stream: it is an application request that holds its app's FULL `queue_ram`
+   and needs its own app's service. One accounting difference: a plain task uploads to the NEAREST UAV
+   before the orchestrator picks its UAV, so "no UAV in range" counts as a bandwidth failure for it, while
+   a partition child is placed first and the same situation counts as VM capacity.
+   `ServicePlacementPolicy` refuses a
    placement that does not fit (see §3); tutorial17-19's `MainApp` check it before the sweep.
-   A RAM rejection has no failure reason of its own - it counts as a VM-capacity rejection,
-   as a CPU one does. To make RAM the binding limit pick numbers where
-   `(vmRam - serviceRam) / queue_ram` is below the CPU bound `floor(100 / vm_utilization_on_edge)`.
+   A RAM rejection has no failure reason of its own - it counts as a VM-capacity rejection.
+   `vm_utilization_on_edge` no longer admits or rejects anything: it still ranks UAVs by load
+   and feeds the utilization results, and its other uses are unchanged.
+   **Values shipped with tutorial6-19** (MB, `service_ram` / `queue_ram`; an app has the same
+   values wherever it appears, since its footprint does not depend on the scenario; the
+   explanation is in each `applications.xml`): `TEXT_MESSAGE` 100/10, `PHOTO_MESSAGE` 250/350,
+   `DISASTER_MAP_FUSION` 1500/2000, `SITUATION_AWARENESS_ALERTS` 600/550 (tutorial6-13: with
+   every UAV hosting all of an app set's services a UAV holds 555 texts, 15 photos, 10 alerts
+   or 2 map fusions in tutorial8-13); `MustPartitionTask` (tutorial14) and `DAG_WORKFLOW`
+   (tutorial15) 1000/8400, deliberately MORE than the 7000 MB a VM has left, so an
+   unpartitioned task never fits and N pieces hold 8400/N each (N=2 -> 1 per UAV, 4 -> 3,
+   8 -> 6, 16 -> 13); `QUEUE_TASK` (tutorial16) 1000/2100 as a placeholder for the swept
+   `queue_ram_policies`; the identical `SERVICE_APP_*` / `VIDEO_APP` .. `ALERT_APP` of
+   tutorial17-19 1000/700 each, i.e. 10 tasks per UAV under `SINGLE` but only 5 under `ALL`.
+   To change how deep a queue is, change `queue_ram` (or `service_ram`), not the CPU share.
 
 ### 6.11 Streams: DAGs whose nodes are applications/services (tutorial18 pattern)
 A *stream* is a request type next to the plain applications: a DAG like `dag_layers` (§6.3b),
@@ -819,8 +851,38 @@ move, so the difference shows. Two independent pieces:
    `SimManager` now initializes the mobility model BEFORE the load generator (so a generator can
    look up where a device is - see §7).
 3. **Logging / plotting**: `SimLogger.addEventLog` -> `<prefix>_EVENTS.log`; tutorial19's
-   `plotUserLocationHeatmapVideo.py` draws the active events and colors UAVs by hosted service.
+   `plotUserLocationHeatmapVideo.py` draws the active events and colors UAVs by hosted service, and
+   right below the map a **timeline** of the events: a time axis with a vertical line at the start of
+   every event topped by the colored symbol of the event's TYPE (what it requests: events asking for the
+   same thing share one symbol, each distinct request gets its own color + marker; the legend names the
+   types), and a dot that moves along the axis as the video plays - so
+   the observer sees an event coming. Event labels on the map are kept inside it.
    The statistics are the tutorial18 ones: applications and streams each get their own plot folder.
+   **Several events files**: every `events*.xml` of `scripts/tutorial19/config` is a separate run of the
+   whole tutorial (MainApp loops over them when started without arguments; `simulation.list`'s 5th
+   field may be a pattern such as `events*.xml`, which `run_scenarios.sh` expands). Results are kept
+   apart by the event name (`config/event_names.properties`): `sim_results/tutorial19/<name>/ite<N>/`
+   from `MainApp` (or `output/<date>/<scenario>/<name>/ite<N>.tar.gz` from `run_scenarios.sh`),
+   and `plot.sh` runs every plot script once per events file with `PLOT_EVENT=<name>` (read by
+   `config.py`), writing to `<PLOT_RUN_DIR or sim_results/tutorial19>/<tutorial name>/<name>/` next
+   to a copy of that events file. Shipped: `events.xml` = `MixedEvents` (the 7 events above), and two
+   test beds for UAV mobility policies:
+   - `events_multisite.xml` = `MultiSite`: ONE request (`VIDEO_APP`, service 0 - hosted by only 4 UAVs)
+     from FOUR places: `STADIUM_MAIN` in the middle (radius 150 m, 300-1500 s, ~2 UAVs' worth of
+     requests at 800 users) and, while it still runs, three small `FANZONE_*` events on the edges
+     (radius 70 m, started a minute apart from 900 s, over before 1500 s; ~0.5-0.7 of a UAV each).
+     Tests where the 4 VIDEO UAVs go when demand for one service is split over a big and three small
+     sites (the sites are ~700 m apart, so each move takes 30-50 s).
+   - `events_silentcrowd.xml` = `SilentCrowd`: the biggest crowd is not where the demand is.
+     `TOWN_SQUARE` (middle, ~450 people at 800 users) requests `VIDEO_APP` once per ~13 min each (a
+     decoy for policies that follow users), `CHEMICAL_LEAK` (south-east corner, 300-900 s) asks
+     for `RESCUE_STREAM` (all 4 services at once, so UAVs of different services must stack on one spot)
+     and `POWER_OUTAGE` (north-west corner, 1000-1600 s) asks for `TRAFFIC_STREAM` (MAP + ALERT only):
+     the demand jumps 1050 m across the map after a 100 s pause (~70 s of flight, longer than
+     `service_demand_window`), so it also shows reaction delay.
+   Measured on one run at 800 users (failed requests): `MultiSite` apps - `SERVICE_KMEANS` ~26%,
+   `SERVICE_APF` ~45%, `SERVICE_CAPACITY_FILL` ~51%, `PRIORITY_KMEANS` ~100%; `SilentCrowd` streams -
+   `SERVICE_KMEANS` ~2%, `SERVICE_CAPACITY_FILL` ~11%, `SERVICE_APF` ~65%, `PRIORITY_KMEANS` 100%.
 4. **Typical result** (tutorial19 defaults, 10 iterations, failed requests): the baseline
    `PRIORITY_KMEANS` fails ~60-90% of the applications and ~95-99% of the streams; the
    service-aware policies are far better - `SERVICE_KMEANS` best at 100 users (~5%) but ~70% /
@@ -828,7 +890,9 @@ move, so the difference shows. Two independent pieces:
    ~60% for streams (slow to bring ALL the services of a stream to the same place).
 5. **New scenario**: copy `applications/tutorial19` and `scripts/tutorial19`, edit
    `events.xml` (add, remove or edit `<event>` entries: positions, windows, request names - any
-   mistake fails with a message naming the event) and `applications.xml`/`streams.xml`. Make sure the events lie inside the
+   mistake fails with a message naming the event) and `applications.xml`/`streams.xml`. To compare several
+   sets of events, add another `events_<anything>.xml` next to it and give it a name in
+   `config/event_names.properties`. Make sure the events lie inside the
    `*_bound` area, that every requested application/stream has `usage_percentage` > 0 (else it
    gets no `_GENERIC.log` and no plot), and that `service_placement_policies` is `SINGLE` (or
    another placement where UAVs host different services).
@@ -910,22 +974,21 @@ move, so the difference shows. Two independent pieces:
 - **How a VM's queue is bounded (verified in `CloudletSchedulerSpaceShared` +
   `UAVEdgeOrchestrator`).** A task queues only when every PE of its VM is busy
   (`currentCpus - usedPes < numberOfPes`) - `vm_utilization_on_edge` plays no part in
-  that and never changes execution speed. It only feeds the orchestrators' admission
-  check `predictUtilization <= 100 - getTotalUtilizationOfCpu(now)`, and
-  `getTotalUtilizationOfCpu` sums the EXEC list only, so `BasicEdgeOrchestrator` and the
-  sample orchestrators never see the waiting list and place no bound on queue depth.
-  `UAVEdgeOrchestrator` (tutorial6-16) also adds the waiting list and the load already
-  reserved in the same batch, so on a 1-core UAV VM at most `floor(100 / u)` tasks (1
-  running + the rest queued) are in the system (u=30 -> 3, u=100 -> 1, u>100 -> none);
-  anything else is `REJECTED_DUE_TO_VM_CAPACITY`. With Poisson arrivals and exponential
-  lengths that is an M/M/1/K queue with K=floor(100/u) - tutorial16 reproduces the
+  that and never changes execution speed. How many tasks the orchestrator lets into a VM at
+  all depends on the orchestrator: `BasicEdgeOrchestrator` and the sample orchestrators
+  (tutorial1-5) check `predictUtilization <= 100 - getTotalUtilizationOfCpu(now)`, and
+  `getTotalUtilizationOfCpu` sums the EXEC list only, so they never see the waiting list and
+  place no bound on queue depth. **`UAVEdgeOrchestrator` (tutorial6-19) admits by RAM alone**
+  (§6.10 step 6): a UAV's VM holds `floor((vmRam - hostedServiceRam) / queue_ram)` tasks of one
+  kind (1 running + the rest queued), counting the running task, the waiting list and the RAM
+  already reserved in the same batch; anything else is `REJECTED_DUE_TO_VM_CAPACITY`. (Before
+  that it was the CPU share, `floor(100 / vm_utilization_on_edge)` - the same bound, with
+  `queue_ram` playing the role of `u`, which is why tutorial14/15/16 kept their queue
+  depths.) With Poisson arrivals and exponential
+  lengths that is an M/M/1/K queue with K = that bound - tutorial16 reproduces the
   textbook blocking `rho^K(1-rho)/(1-rho^(K+1))` and mean wait to within a few percent.
   There is no queue-delay metric: the wait is folded into the processing time
   (`serviceTime - networkDelay`). `Cloudlet.getWaitingTime()` exists but nothing logs it.
-  `queue_ram` (§6.10 step 6) adds a second, independent bound on UAVs: a task is also
-  rejected when its RAM does not fit what the hosted services and the tasks already there
-  leave of the UAV's VM RAM (never the host's), so the admission limit is the stricter of the
-  CPU and RAM ones.
 - **CloudSim drops the finish event of very short tasks (fixed everywhere via
   `core/CloudletSchedulerSpaceShared_Custom`).**
   `Datacenter.processCloudletSubmit` runs `updateCloudletProcessing()` and then schedules
@@ -935,7 +998,8 @@ move, so the difference shows. Two independent pieces:
   one. A task whose service time is below that window (~1% of tasks with exponential
   lengths at 1 s mean service) was never completed and kept occupying the exec list until
   some later submit triggered another update. On a VM that admits one task at a time
-  (`vm_utilization_on_edge` > 50 on a 1-core UAV) nothing else is ever admitted, so the VM
+  (e.g. a `queue_ram` above half of what is left of a 1-core UAV's VM RAM; before RAM
+  admission, `vm_utilization_on_edge` > 50) nothing else is ever admitted, so the VM
   deadlocked for the rest of the run (~98% rejected instead of ~50%); on busier VMs it
   only delayed that task's completion by an arbitrary amount. Every VM creation site
   (`DefaultEdgeServerManager`, `DefaultCloudServerManager`, every tutorial's
