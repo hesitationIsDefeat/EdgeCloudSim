@@ -9,13 +9,15 @@
 
 // High-level execution phases:
 // 1) Parse / default command line args
-// 2) Load simulation settings (config, devices, applications, streams) and the world events
-// 3) For each iteration
-//    3.1) For each mobile device population size
-//          3.1.1) For each simulation scenario
-//                  3.1.1.1) For each orchestrator policy
-//                             3.1.1.1.1) For each UAV mobility option
-//                              3.1.1.1.1.1) For each service placement policy
+// 2) Load simulation settings (config, devices, applications, streams) and the world events of
+//    every events file (all of them are checked before anything runs)
+// 3) For each events file (see EventsFiles - from the command line a run is given exactly one)
+//    3.1) For each iteration
+//    3.1.1) For each mobile device population size
+//          3.1.1.1) For each simulation scenario
+//                  3.1.1.1.1) For each orchestrator policy
+//                             3.1.1.1.1.1) For each UAV mobility option
+//                              3.1.1.1.1.1.1) For each service placement policy
 //                              - Initialize CloudSim
 //                              - Build scenario factory
 //                              - Create SimManager
@@ -27,19 +29,23 @@
 // (centralized UAV mobility, SINGLE service placement - each UAV hosts one of four services -,
 // requests that are applications or streams) things now HAPPEN: events with a place, a time
 // window and a request (an application or a stream) that the users inside the event's radius
-// make while it lasts (events.xml, one entry per event); with event_requests_only they make no other request,
+// make while it lasts (an events file, one entry per event); with event_requests_only they make no other request,
 // and with event_gather the users around an event walk to it, so a crowd forms and the events can
 // be watched in the heat-map video (the EVENTS.log lists them). uav_mobility_options sweeps the
 // service-blind PRIORITY_KMEANS (UAVs follow the crowds) against the service-aware policies
 // SERVICE_KMEANS, SERVICE_APF and SERVICE_CAPACITY_FILL, which send each UAV to where the
 // services IT hosts are being requested (see ServiceAwareUavPolicies/ServiceDemandTracker) -
 // so the UAVs with the right services are at an event, not just any UAVs.
+// The tutorial comes with any number of events files (events.xml, events_<anything>.xml in its
+// config folder, named in config/event_names.properties) and is run in full for each of them, its
+// results going to sim_results/tutorial19/<name of the events file>/ite<N>.
 
 package edu.boun.edgecloudsim.applications.tutorial19;
 
 import java.io.File;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -51,6 +57,7 @@ import edu.boun.edgecloudsim.core.ScenarioFactory;
 import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.edge_server.uav.ServicePlacementPolicy;
+import edu.boun.edgecloudsim.events.EventsFiles;
 import edu.boun.edgecloudsim.events.WorldEvent;
 import edu.boun.edgecloudsim.events.WorldEventLoader;
 import edu.boun.edgecloudsim.mobility.uav.CentralizedUAVMobility;
@@ -61,6 +68,19 @@ public class MainApp {
 
     public static final int EXPECTED_NUM_OF_ARGS = 7;
     public static final String APPLICATION_FOLDER = "tutorial19";
+    // Where the names the events files are run under are kept (see EventsFiles)
+    private static final String EVENT_NAMES_FILE = "config/event_names.properties";
+
+    /** One events file: the name it is run under and the world events it lists. */
+    private static final class EventsRun {
+        private final String name;
+        private final List<WorldEvent> events;
+
+        private EventsRun(String name, List<WorldEvent> events) {
+            this.name = name;
+            this.events = events;
+        }
+    }
 
     /**
      * Creates main() to run this example
@@ -81,7 +101,9 @@ public class MainApp {
         String edgeDevicesFile = null;
         String applicationsFile = null;
         String streamsFile = null;
-        String eventsFile = null;
+        // A run from the command line is given one events file; without arguments every events file of
+        // the tutorial's config folder is run
+        List<EventsFiles.Entry> eventsFiles = null;
 
         // Parse command line arguments:
         // Expected: 0:config 1:edge_devices 2:applications 3:streams 4:events 5:output_folder 6:iteration
@@ -91,7 +113,7 @@ public class MainApp {
             edgeDevicesFile = args[1];
             applicationsFile = args[2];
             streamsFile = args[3];
-            eventsFile = args[4];
+            eventsFiles = List.of(EventsFiles.single(args[4]));
             outputFolder = args[5];
             iterationStart = Integer.parseInt(args[6]);
             iterationEnd = iterationStart;
@@ -99,11 +121,17 @@ public class MainApp {
         else{
             // Inform user that defaults are used (common in IDE debugging)
             SimLogger.printLine("Simulation setting file, output folder and iteration number are not provided! Using default ones...");
-            configFile = "scripts/" + APPLICATION_FOLDER + "/config/default_config.properties";
-            applicationsFile = "scripts/" + APPLICATION_FOLDER + "/config/applications.xml";
-            streamsFile = "scripts/" + APPLICATION_FOLDER + "/config/streams.xml";
-            eventsFile = "scripts/" + APPLICATION_FOLDER + "/config/events.xml";
-            edgeDevicesFile = "scripts/" + APPLICATION_FOLDER + "/config/edge_devices.xml";
+            String configFolder = "scripts/" + APPLICATION_FOLDER + "/config";
+            configFile = configFolder + "/default_config.properties";
+            applicationsFile = configFolder + "/applications.xml";
+            streamsFile = configFolder + "/streams.xml";
+            edgeDevicesFile = configFolder + "/edge_devices.xml";
+            try {
+                eventsFiles = EventsFiles.discover(configFolder, APPLICATION_FOLDER, EVENT_NAMES_FILE);
+            } catch (IllegalArgumentException e) {
+                SimLogger.printLine("invalid events files: " + e.getMessage());
+                System.exit(0);
+            }
 
             // !! IMPORTANT NOTICE !!
             // For those who are using IDE (eclipse etc) can modify
@@ -144,13 +172,16 @@ public class MainApp {
             }
         }
         // The events name applications/streams of this tutorial's files, hence loaded after them.
-        // They are plain immutable data, so the one list serves every scenario of the sweep.
-        List<WorldEvent> worldEvents = null;
-        try {
-            worldEvents = WorldEventLoader.load(eventsFile);
-        } catch (IllegalArgumentException e) {
-            SimLogger.printLine("invalid world events: " + e.getMessage());
-            System.exit(0);
+        // They are plain immutable data, so the one list of a file serves every scenario of the sweep.
+        // Every file is loaded here, so that a mistake in one stops the run before any simulation starts.
+        List<EventsRun> eventsRuns = new ArrayList<EventsRun>();
+        for (EventsFiles.Entry eventsFile : eventsFiles) {
+            try {
+                eventsRuns.add(new EventsRun(eventsFile.getName(), WorldEventLoader.load(eventsFile.getPath())));
+            } catch (IllegalArgumentException e) {
+                SimLogger.printLine("invalid world events in '" + eventsFile.getPath() + "': " + e.getMessage());
+                System.exit(0);
+            }
         }
 
         // Prepare date formatter for human-readable logging timestamps
@@ -160,11 +191,38 @@ public class MainApp {
         SimLogger.printLine("Simulation started at " + now);
         SimLogger.printLine("----------------------------------------------------------------------");
 
+        // The whole tutorial is run once for each events file
+        for (EventsRun eventsRun : eventsRuns) {
+            runEvents(eventsRun, iterationStart, iterationEnd, args.length == EXPECTED_NUM_OF_ARGS ? outputFolder : null);
+        }
+
+        // Final summary for the entire multi-iteration batch
+        Date SimulationEndDate = Calendar.getInstance().getTime();
+        now = df.format(SimulationEndDate);
+        SimLogger.printLine("Simulation finished at " + now +  ". It took " + SimUtils.getTimeDifference(SimulationStartDate,SimulationEndDate));
+    }
+
+    /**
+     * Runs the whole sweep of the tutorial under the world events of one events file.
+     *
+     * @param scriptOutputFolder the output folder a script run was given, or null to write to
+     *                           sim_results/tutorial19/&lt;events name&gt;/ite&lt;N&gt; for every iteration
+     */
+    private static void runEvents(EventsRun eventsRun, int iterationStart, int iterationEnd, String scriptOutputFolder) {
+        SimSettings SS = SimSettings.getInstance();
+        List<WorldEvent> worldEvents = eventsRun.events;
+        String outputFolder = scriptOutputFolder;
+        DateFormat df = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
+        String now;
+
+        SimLogger.printLine("Events: " + eventsRun.name + " (" + worldEvents.size() + " events)");
+        SimLogger.printLine("----------------------------------------------------------------------");
+
         // For each iteration specified by the user or default range
         for(int iterationNumber=iterationStart; iterationNumber<=iterationEnd; iterationNumber++) {
             // Derive output folder automatically when not explicitly provided
-            if (args.length != EXPECTED_NUM_OF_ARGS)
-                outputFolder = "sim_results/" + APPLICATION_FOLDER + "/ite" + iterationNumber;
+            if (scriptOutputFolder == null)
+                outputFolder = "sim_results/" + APPLICATION_FOLDER + "/" + eventsRun.name + "/ite" + iterationNumber;
 
             if(SS.getFileLoggingEnabled()){
                 // File logging enabled -> ensure clean slate for this iteration
@@ -265,10 +323,5 @@ public class MainApp {
                 }//End of scenarios loop
             }//End of mobile devices loop
         }//End of iteration loop
-
-        // Final summary for the entire multi-iteration batch
-        Date SimulationEndDate = Calendar.getInstance().getTime();
-        now = df.format(SimulationEndDate);
-        SimLogger.printLine("Simulation finished at " + now +  ". It took " + SimUtils.getTimeDifference(SimulationStartDate,SimulationEndDate));
     }
 }

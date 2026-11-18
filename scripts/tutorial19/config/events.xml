@@ -22,7 +22,11 @@
 	       - each event draws its crowd from far away (attraction_radius 450 m) but only the part
 	         standing within 100 m of its center - where one UAV covers all of it - requests.
 	     To add an event, copy one and change its values; an unknown request name, a missing or
-	     unknown tag or a center outside the map stops the simulation with a message. -->
+	     unknown tag or a center outside the map stops the simulation with a message.
+	     To compare another set of events, add another file next to this one, called events_<anything>.xml
+	     (events*.xml are all found by themselves), and give it a name in config/event_names.properties
+	     (a line tutorial19.events_<anything>=<name>). The whole tutorial is run once for each events file, and
+	     its results go to a folder with that name (sim_results/tutorial19/<name>/ite<N>). -->
 
 	<!-- application VIDEO_APP (service 0) -->
 	<event name="CONCERT">
