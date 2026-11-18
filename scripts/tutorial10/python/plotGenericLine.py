@@ -81,9 +81,13 @@ def plot_generic_line(row_offset, column_offset, y_label, app_type='ALL_APPS',
                 data_slice = all_results[:, i, j][~np.isnan(all_results[:, i, j])] / divisor
                 if len(data_slice) > 1:
                     std_err = np.std(data_slice, ddof=1) / np.sqrt(len(data_slice))
-                    ci = t.interval(0.95, len(data_slice)-1, loc=mean_results[i, j], scale=std_err)
-                    min_ci_vals[i, j] = mean_results[i, j] - ci[0]
-                    max_ci_vals[i, j] = ci[1] - mean_results[i, j]
+                    # ONAT: identical values in every iteration have a zero-width interval; scipy's
+                    # t.interval turns scale=0 into NaN (and warns), which would also drop the point's
+                    # error bar - so keep the 0 it starts at.
+                    if std_err > 0:
+                        ci = t.interval(0.95, len(data_slice)-1, loc=mean_results[i, j], scale=std_err)
+                        min_ci_vals[i, j] = mean_results[i, j] - ci[0]
+                        max_ci_vals[i, j] = ci[1] - mean_results[i, j]
 
     # --- Plotting ---
     fig, ax = plt.subplots()
