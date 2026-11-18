@@ -25,8 +25,8 @@
 // ONAT: tutorial14 has a single normal-user population (no SAR members at all - see
 // default_config.properties, which never sets sar_member_percentage, so
 // SS.computeNumOfSarMembers() always returns 0) running a single application,
-// MustPartitionTask, whose vm_utilization_on_edge (120%) exceeds what a single edge VM
-// can ever satisfy unpartitioned. UAV mobility is FIXED to a single KMEANS variant
+// MustPartitionTask, whose queue_ram (8400 MB) exceeds what a single edge VM
+// (8000 MB, minus its 1000 MB service) can ever hold unpartitioned. UAV mobility is FIXED to a single KMEANS variant
 // (bare PRIORITY_KMEANS, see uav_mobility_options - only one entry, taken once below,
 // not swept); instead this tutorial sweeps task_partition_policies
 // (PARTITION_1/PARTITION_2/PARTITION_4), each forcing MustPartitionTask to split into

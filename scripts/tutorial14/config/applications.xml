@@ -1,14 +1,22 @@
 <?xml version="1.0"?>
 <applications>
-	<!-- ONAT: tutorial14's only application. vm_utilization_on_edge (120%) deliberately
-	     EXCEEDS a single edge VM's 100% capacity, so an unpartitioned task (PARTITION_1)
-	     can NEVER be admitted on the edge tier - only partitioning into >=2 pieces (which
-	     divides the per-child utilization share by partition count, see
-	     CpuUtilizationModel_Custom) can make it fit. partition_count below is a
+	<!-- ONAT: tutorial14's only application. queue_ram (8400 MB) is deliberately MORE than an
+	     edge VM has left (the VM has 8000 MB and the service takes service_ram 1000 MB, so
+	     7000 MB), so an unpartitioned task (PARTITION_1) can NEVER be admitted on the edge
+	     tier - think of an in-memory reconstruction of the whole search area (imagery, point
+	     cloud and feature maps, ~8.4 GB), more than any one UAV can hold. Only partitioning
+	     into >=2 pieces (which divides the RAM each piece holds by the partition count, see
+	     Task.getQueueRam()) can make it fit: 2 pieces of 4200 MB -> 1 per UAV, 4 of 2100 MB
+	     -> 3, 8 of 1050 MB -> 6, 16 of 525 MB -> 13 (1 running, the rest queued). A UAV
+	     admits a task by RAM alone (UAVEdgeOrchestrator); vm_utilization_on_edge (120%) no
+	     longer admits or rejects anything - it only tells which UAV is the least loaded
+	     and feeds the utilization results. partition_count below is a
 	     placeholder; MainApp overrides it every run according to the active
 	     task_partition_policy (PARTITION_1/PARTITION_2/PARTITION_4 - see
 	     SimSettings.setPartitionCountOverride()). -->
 	<application name="MustPartitionTask">
+		<service_ram>1000</service_ram>
+		<queue_ram>8400</queue_ram>
 		<usage_percentage>100</usage_percentage>
 		<partitionable>true</partitionable>
 		<partition_count>4</partition_count>

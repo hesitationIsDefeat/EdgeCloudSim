@@ -20,8 +20,23 @@
 	     decide when it is requested and how long it may take. service_index labels the service a
 	     UAV hosts (see ServicePlacementPolicy); a node whose service no in-range UAV hosts fails
 	     (REJECTED_DUE_TO_VM_CAPACITY) and with it the whole stream. -->
+	<!-- ONAT: UAV RAM costs, in MB. A UAV admits a task by RAM alone: service_ram is spent once on
+	     every UAV that hosts the service - the service placement policy decides how many - and
+	     queue_ram is held by every task of the app while it is queued or running on the UAV. A
+	     task that does not fit in what is left of the UAV's VM RAM (8000 MB, edge_devices.xml)
+	     is rejected (REJECTED_DUE_TO_VM_CAPACITY). Under SINGLE (one service per UAV) a UAV
+	     holds up to (8000 - 1000) / 700 = 10 tasks at once (1 running, the rest queued), under
+	     ALL (all four services on every UAV, 4 x 1000 MB) only (8000 - 4000) / 700 = 5: hosting
+	     more services leaves less RAM for queueing. A sub-task of the DAG SERVICE_APP_1 holds its
+	     share of queue_ram (700 / 4 = 175 MB). vm_utilization_on_edge no longer limits the queue -
+	     it only tells which UAV is the least loaded and feeds the utilization results.
+	     The 4 apps have the same workload (2000 MI, 50 KB in, 100 KB out), so the same values: an
+	     analytics microservice whose runtime and model take 1000 MB and whose request holds ~700 MB
+	     (the decoded input, the model's activations and the output buffers). -->
 	<application name="SERVICE_APP_0">
 		<service_index>0</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>20</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>50</poisson_interarrival>
@@ -39,6 +54,8 @@
 	</application>
 	<application name="SERVICE_APP_1">
 		<service_index>1</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>20</usage_percentage>
 		<dag_layers>1,2,1</dag_layers>
 		<prob_cloud_selection>0</prob_cloud_selection>
@@ -56,6 +73,8 @@
 	</application>
 	<application name="SERVICE_APP_2">
 		<service_index>2</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>0</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>50</poisson_interarrival>
@@ -72,6 +91,8 @@
 	</application>
 	<application name="SERVICE_APP_3">
 		<service_index>3</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>0</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>50</poisson_interarrival>

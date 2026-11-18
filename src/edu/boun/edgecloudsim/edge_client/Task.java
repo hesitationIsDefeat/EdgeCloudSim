@@ -15,6 +15,7 @@ import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.core.CloudSim;
 
+import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.utils.Location;
 
 /**
@@ -184,6 +185,16 @@ public class Task extends Cloudlet {
 
 	public int getChildCount(){
 		return childCount;
+	}
+
+	/**
+	 * ONAT: the RAM (MB) this task holds on a UAV for as long as it is queued or running there
+	 * (applications.xml's queue_ram). Like the CPU share (see CpuUtilizationModel_Custom), the
+	 * value is for one whole task, so a partition child holds its 1/childCount of it.
+	 * @return RAM in MB, 0 for an application that doesn't set queue_ram
+	 */
+	public double getQueueRam(){
+		return SimSettings.getInstance().getTaskQueueRam(type) / childCount;
 	}
 	
 	/**

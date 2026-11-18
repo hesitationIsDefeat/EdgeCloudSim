@@ -25,7 +25,7 @@ import org.cloudbus.cloudsim.core.CloudSim;
  * is shorter than that window (< 0.01 s with the 0.01 granularity every MainApp uses) therefore
  * has its finish event dropped and stays in the exec list - still counted by the
  * orchestrators' admission check - until some later submit happens to trigger another update.
- * On a VM that admits one task at a time (e.g. vm_utilization_on_edge > 50 on a 1-core UAV VM)
+ * On a VM that admits one task at a time (e.g. a queue_ram above half of what is left of a 1-core UAV VM's RAM)
  * nothing else is ever admitted, so the VM stays blocked for the rest of the run; on busier VMs
  * it only delays that task's completion by an arbitrary amount.
  *

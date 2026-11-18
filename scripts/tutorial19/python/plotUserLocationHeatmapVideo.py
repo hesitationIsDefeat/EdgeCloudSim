@@ -21,6 +21,12 @@ AREA_BOUNDS = {'x_min': 0, 'x_max': 1000, 'y_min': 0, 'y_max': 1000}
 # are kept clear of the heat map's yellow-red range so a UAV stays visible on top of a crowd.
 _SERVICE_COLORS = ['tab:blue', 'tab:green', 'tab:purple', 'tab:cyan', 'tab:olive', 'tab:pink']
 _EVENT_COLOR = 'black'
+# ONAT: every event TYPE - what an event requests: events asking for the same thing are of the same type -
+# gets its own symbol on the timeline: the i-th distinct request of the EVENTS.log takes the i-th color
+# and the i-th marker (cycled, so more types than entries still differ in one of them).
+# The colors stay clear of the UAV service colors and the markers of the UAV triangle.
+_EVENT_SYMBOL_COLORS = ['tab:red', 'tab:orange', 'tab:brown', 'magenta', 'gold', 'tab:gray', 'maroon', 'darkslategray']
+_EVENT_SYMBOL_MARKERS = ['o', 's', 'D', 'P', 'X', '*', 'v', 'h']
 
 
 def _read_events_log(file_path):
@@ -59,6 +65,60 @@ def _read_location_log(file_path, id_column):
     return data
 
 
+def _event_label_position(event):
+    """
+    (x, y, vertical alignment) of an event's label: centered above its circle, moved sideways so that it
+    stays inside the map and put below the circle when there is no room above it.
+    """
+    half_width, height, gap = 190, 60, 12  # m on the map: about the longest label's half width and its height
+    x = min(max(event['x'], AREA_BOUNDS['x_min'] + half_width), AREA_BOUNDS['x_max'] - half_width)
+    if event['y'] + event['radius'] + gap + height > AREA_BOUNDS['y_max']:
+        return x, event['y'] - event['radius'] - gap, 'top'
+    return x, event['y'] + event['radius'] + gap, 'bottom'
+
+
+def _event_type_symbols(events):
+    """
+    {request: (color, marker)} for the event types of the EVENTS.log, used on the timeline and in its
+    legend. Events that request the same thing are of the same type and share their symbol; the i-th
+    distinct request (in log order) takes the i-th color and the i-th marker.
+    """
+    requests = list(dict.fromkeys(e['request'] for e in events))
+    return {request: (_EVENT_SYMBOL_COLORS[i % len(_EVENT_SYMBOL_COLORS)],
+                      _EVENT_SYMBOL_MARKERS[i % len(_EVENT_SYMBOL_MARKERS)])
+            for i, request in enumerate(requests)}
+
+
+def _draw_timeline(timeline_ax, events, symbols, first_time, last_time):
+    """
+    Draws the timeline of the simulation under the map: a time axis with, at the start time of every
+    event, a vertical line topped by the symbol of the event's type (see _event_type_symbols), so that
+    whoever watches the video sees an event coming. Returns the two artists the video moves along the
+    axis - the line over the time that has passed and the dot at the current time - both still at
+    first_time.
+    """
+    # An event that ends after the last frame still fits on the axis
+    timeline_ax.set_xlim(min(0, first_time), max([last_time] + [e['end'] for e in events]))
+    timeline_ax.set_ylim(0, 1.5)
+    timeline_ax.set_yticks([])
+    for side in ('left', 'right', 'top'):
+        timeline_ax.spines[side].set_visible(False)
+    timeline_ax.spines['bottom'].set_linewidth(1.2)
+    timeline_ax.set_xlabel('Simulation Time (s)')
+
+    for e in events:
+        color, marker = symbols[e['request']]
+        timeline_ax.vlines(e['start'], 0, 1, colors=color, linewidth=1.5, zorder=2)
+        timeline_ax.plot([e['start']], [1], marker=marker, color=color, markeredgecolor='black', markersize=9,
+                         linestyle='none', clip_on=False, zorder=5)
+
+    elapsed_line, = timeline_ax.plot([first_time, first_time], [0, 0], color='black', linewidth=3.5,
+                                     solid_capstyle='butt', zorder=3)
+    progress_dot, = timeline_ax.plot([first_time], [0], marker='o', markerfacecolor='white', markeredgecolor='black',
+                                     markeredgewidth=2, markersize=10, linestyle='none', clip_on=False, zorder=6)
+    return elapsed_line, progress_dot
+
+
 def generate_user_location_heatmap_video(scenario=None, num_devices=None, iteration=1,
                                           grid_size=40, fps=5, output_path=None):
     """
@@ -66,6 +126,10 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     throughout the simulation, with the UAVs overlaid as markers colored by the service they
     host, and the world events (EVENTS.log) drawn as circles while they are active: the solid
     circle is the radius users request inside, the dashed one the radius users are drawn from.
+    Right below the map, a timeline marks the start of every event with a vertical line topped by
+    the colored symbol of the event's type (events requesting the same thing share one), and a dot
+    moves along it as the video plays.
+    The events of the PLOT_EVENT events file (see config.py) are the ones read and shown.
     """
     config = get_configuration()
     folder_path = config['folder_path']
@@ -146,7 +210,10 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
 
     vmax = max(h.max() for h in heatmaps)
 
-    fig, ax = plt.subplots(figsize=(7.4, 7.0))
+    # ONAT: layout (figure fractions): the heat map on top, the timeline of the events right below it
+    # and as wide as the map, the legends at the bottom.
+    fig = plt.figure(figsize=(7.4, 9.4))
+    ax = fig.add_axes([0.10, 0.39, 0.80, 0.58])
     plt.rcParams.update({'font.family': 'Times New Roman', 'font.size': 11})
 
     im = ax.imshow(heatmaps[0], origin='lower', cmap='YlOrRd', vmin=0, vmax=vmax,
@@ -165,7 +232,8 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
                                linewidth=1.8, zorder=5, visible=False)
         attraction_circle = Circle((e['x'], e['y']), e['attraction_radius'], fill=False, edgecolor=_EVENT_COLOR,
                                    linewidth=0.8, linestyle='--', alpha=0.5, zorder=5, visible=False)
-        label = ax.text(e['x'], e['y'] + e['radius'] + 12, '', ha='center', va='bottom', fontsize=8, zorder=6,
+        label_x, label_y, label_va = _event_label_position(e)
+        label = ax.text(label_x, label_y, '', ha='center', va=label_va, fontsize=8, zorder=6,
                         bbox=dict(facecolor='white', edgecolor=_EVENT_COLOR, alpha=0.85, boxstyle='round,pad=0.2'),
                         visible=False)
         ax.add_patch(radius_circle)
@@ -177,6 +245,16 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
     ax.set_ylabel('Y Position (m)')
     title = ax.set_title(f'{scenario_legend} (t = {time_steps[0]:.0f}s)')
 
+    # The equal-aspect map is narrower than the box it was given, so the colorbar and the timeline
+    # follow the position it really takes.
+    ax.apply_aspect()
+    map_position = ax.get_position()
+    fig.colorbar(im, cax=fig.add_axes([map_position.x1 + 0.02, map_position.y0, 0.025, map_position.height]),
+                 label='# of Clients')
+    timeline_ax = fig.add_axes([map_position.x0, 0.215, map_position.width, 0.10])
+    symbols = _event_type_symbols(events)
+    elapsed_line, progress_dot = _draw_timeline(timeline_ax, events, symbols, time_steps[0], time_steps[-1])
+
     legend_handles = [Line2D([0], [0], marker='^', color='none', markerfacecolor=color, markeredgecolor='black',
                              markersize=9, label=f"UAV hosting {', '.join(service_names[s])}")
                       for s, color in service_color.items() if placement_policy == 'SINGLE']
@@ -187,9 +265,16 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
         legend_handles.append(Line2D([0], [0], color=_EVENT_COLOR, linewidth=1.8, label='Event radius (users request)'))
         legend_handles.append(Line2D([0], [0], color=_EVENT_COLOR, linewidth=0.8, linestyle='--', alpha=0.5,
                                      label='Event attraction radius'))
-    ax.legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=3, fontsize=8, frameon=False)
-    fig.colorbar(im, ax=ax, label='# of Clients')
-    fig.subplots_adjust(left=0.1, right=0.95, top=0.94, bottom=0.17)
+    fig.legend(handles=legend_handles, loc='lower center', bbox_to_anchor=(0.5, 0.005), ncol=3, fontsize=8, frameon=False)
+    if events:
+        # One entry per event type; the number of events of a type is added when there is more than one
+        events_per_type = {request: sum(1 for e in events if e['request'] == request) for request in symbols}
+        event_handles = [Line2D([0], [0], marker=marker, color='none', markerfacecolor=color,
+                                markeredgecolor='black', markersize=8,
+                                label=request if events_per_type[request] == 1 else f'{request} (x{events_per_type[request]})')
+                         for request, (color, marker) in symbols.items()]
+        fig.legend(handles=event_handles, title='Event types (symbol marks the start of an event)', loc='upper center',
+                   bbox_to_anchor=(0.5, 0.145), ncol=4, fontsize=8, title_fontsize=8, frameon=False)
 
     def update(frame_index):
         t = time_steps[frame_index]
@@ -203,8 +288,10 @@ def generate_user_location_heatmap_video(scenario=None, num_devices=None, iterat
             label.set_visible(is_active)
             if is_active:
                 label.set_text(f"{e['name']}: {e['request']}\n{users_in_event[frame_index][event_index]} users inside")
+        elapsed_line.set_data([time_steps[0], t], [0, 0])
+        progress_dot.set_data([t], [0])
         title.set_text(f'{scenario_legend} (t = {t:.0f}s)')
-        return (im, uav_scatter, title,
+        return (im, uav_scatter, title, elapsed_line, progress_dot,
                 *[artist for artists in event_artists for artist in artists])
 
     ani = animation.FuncAnimation(fig, update, frames=len(time_steps), blit=False)

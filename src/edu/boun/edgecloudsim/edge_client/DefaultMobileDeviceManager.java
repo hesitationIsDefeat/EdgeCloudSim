@@ -36,6 +36,7 @@ import org.cloudbus.cloudsim.core.SimEvent;
 import edu.boun.edgecloudsim.core.SimManager;
 import edu.boun.edgecloudsim.core.SimSettings;
 import edu.boun.edgecloudsim.core.SimSettings.NETWORK_DELAY_TYPES;
+import edu.boun.edgecloudsim.edge_server.uav.UAV;
 import edu.boun.edgecloudsim.network.NetworkModel;
 import edu.boun.edgecloudsim.utils.StreamTaskProperty;
 import edu.boun.edgecloudsim.utils.TaskProperty;
@@ -1397,6 +1398,23 @@ public class DefaultMobileDeviceManager extends MobileDeviceManager {
 		if (selectedVM == null) {
 			if (task.isPartitionChild()) {
 				failPartition(task.getParentTaskId(), SimLogger.TASK_STATUS.REJECTED_DUE_TO_VM_CAPACITY, NETWORK_DELAY_TYPES.WLAN_DELAY);
+			}
+			return;
+		}
+
+		// ONAT: a UAV chosen before the upload (a partition child or a stream node, see
+		// UAVEdgeOrchestrator.getVmsToOffload) may have lost RAM to other tasks that were bound
+		// to it during that upload. RAM is a hard limit, so the task is rejected like one for
+		// which no UAV was found, instead of being queued past what the UAV can hold.
+		if (selectedVM.getHost() instanceof UAV && !((UAV) selectedVM.getHost()).hasRamFor(task, 0.0)) {
+			if (task.isPartitionChild()) {
+				failPartition(task.getParentTaskId(), SimLogger.TASK_STATUS.REJECTED_DUE_TO_VM_CAPACITY, NETWORK_DELAY_TYPES.WLAN_DELAY);
+			}
+			else {
+				if (!timedOutTaskIds.remove(task.getCloudletId())) {
+					SimLogger.getInstance().rejectedDueToVMCapacity(task.getCloudletId(), CloudSim.clock(), SimSettings.VM_TYPES.EDGE_VM.ordinal());
+				}
+				resolveTimeout(task.getCloudletId());
 			}
 			return;
 		}

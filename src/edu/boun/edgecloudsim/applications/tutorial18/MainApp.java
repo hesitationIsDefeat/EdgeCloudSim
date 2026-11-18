@@ -125,6 +125,12 @@ public class MainApp {
                         + "' (supported: " + ServicePlacementPolicy.SUPPORTED_POLICIES + ")");
                 System.exit(0);
             }
+            try {
+                new ServicePlacementPolicy(servicePlacementPolicy).validate(SS.getNumOfEdgeHosts());
+            } catch (IllegalStateException e) {
+                SimLogger.printLine("invalid service placement: " + e.getMessage());
+                System.exit(0);
+            }
         }
 
         // Prepare date formatter for human-readable logging timestamps

@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<events>
+	<!-- ONAT: MULTI-SITE SURGE - ONE request (the live video of a match, VIDEO_APP = service 0) comes
+	     from FOUR places at once, and only 4 UAVs host that service (SINGLE placement: UAV i hosts
+	     service i % 4, so one starts in each quadrant). The question it asks of a UAV mobility
+	     policy: where do the 4 VIDEO UAVs have to be to lose the fewest requests? A UAV serves about
+	     1.25 requests/s (a 0.8 s task), so the 4 of them serve about 5 requests/s together.
+	       - STADIUM_MAIN, the big event, in the middle of the map: a wide crowd (radius 150 m, wider
+	         than the 100 m a UAV reaches, so one UAV cannot even cover all of it) asking ~2.4
+	         requests/s at 800 users - about 2 UAVs' worth.
+	       - FANZONE_NORTH / _SOUTHWEST / _SOUTHEAST, three small events on the edges, same request:
+	         each a small crowd (radius 70 m - one UAV covers all of it) asking ~0.65-0.85 requests/s
+	         at 800 users - over half a UAV each. They start a minute apart while the stadium is still
+	         going (so UAVs have to leave it for the edges) and are over before it ends (so they have
+	         to come back).
+	     What to look for in the heat-map video (the sites have the same symbol on the timeline - same
+	     request):
+	       - 300-900 s: only the stadium. The VIDEO UAVs should gather there and spread over the crowd:
+	         two of them cover and serve it, stacking all four on its center covers no more of it.
+	       - 900-1420 s: all four sites at once. At 800 users they ask ~4.6 requests/s in total
+	         against ~5 served, but that takes 2 + 1 + 1 + 1 UAVs and there are only 4, so some site has
+	         to go short, and what separates the policies is where the shortage falls. A policy that
+	         follows the biggest crowd leaves the fan zones with nobody in range (every request there
+	         is rejected); one that sends a UAV to each site overloads the stadium (queues full,
+	         requests rejected); one that leaves the VIDEO UAVs near where they started misses most.
+	       - 1420-1500 s: the stadium alone again: the UAVs that went to the edges have to come back.
+	     At fewer users the same schedule is a lighter test: at 200-500 users one UAV per site
+	     (two on the stadium, for its width) is enough capacity, so the failures that remain are UAVs
+	     that are late or in the wrong place, not queues. The whole 100-800 sweep reads as one curve
+	     per policy.
+	     The sites form a triangle around the stadium (417 m away, ~710 m from each other): a UAV needs
+	     30-50 s to cross from one to the next at 15 m/s. The warm-up (180 s) is over before the
+	     first event starts. All times in simulation seconds (1800 s in total, nothing after 1500 s). -->
+
+	<event name="STADIUM_MAIN">
+		<start_time>300</start_time>
+		<end_time>1500</end_time>
+		<x_pos>500</x_pos>
+		<y_pos>500</y_pos>
+		<radius>150</radius>
+		<attraction_radius>350</attraction_radius>
+		<participation>0.7</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>100</poisson_interarrival>
+	</event>
+
+	<event name="FANZONE_NORTH">
+		<start_time>900</start_time>
+		<end_time>1300</end_time>
+		<x_pos>500</x_pos>
+		<y_pos>900</y_pos>
+		<radius>70</radius>
+		<attraction_radius>200</attraction_radius>
+		<participation>0.8</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>75</poisson_interarrival>
+	</event>
+
+	<event name="FANZONE_SOUTHWEST">
+		<start_time>960</start_time>
+		<end_time>1360</end_time>
+		<x_pos>140</x_pos>
+		<y_pos>290</y_pos>
+		<radius>70</radius>
+		<attraction_radius>200</attraction_radius>
+		<participation>0.8</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>75</poisson_interarrival>
+	</event>
+
+	<event name="FANZONE_SOUTHEAST">
+		<start_time>1020</start_time>
+		<end_time>1420</end_time>
+		<x_pos>860</x_pos>
+		<y_pos>290</y_pos>
+		<radius>70</radius>
+		<attraction_radius>200</attraction_radius>
+		<participation>0.8</participation>
+		<request>VIDEO_APP</request>
+		<poisson_interarrival>75</poisson_interarrival>
+	</event>
+</events>

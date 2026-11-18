@@ -1,8 +1,10 @@
 import os
+import re
+import sys
 import xml.etree.ElementTree as ET
 
 # ONAT: tutorial19 compares CENTRALIZED UAV MOBILITY policies - the service-blind baseline against
-# the service-aware ones - under the world events of events.xml, so every plot has one
+# the service-aware ones - under the world events of an events file, so every plot has one
 # line per entry of default_config.properties's uav_mobility_options (legends/colors/markers below
 # are all derived from it - adding a policy there is enough; a friendly legend for it can be added
 # to _MOBILITY_LEGENDS, otherwise its name is shown). The service placement policy is held fixed
@@ -10,12 +12,21 @@ import xml.etree.ElementTree as ET
 # file names MainApp.java writes.
 # Requests are either plain applications or streams (see streams.xml), so the plots come in two
 # groups written to two sub-folders of the output folder - see get_plot_groups().
+# The tutorial is run once for every events file of the config folder (events.xml, events_<anything>.xml - see
+# get_events_files()), each run keeping its results in a folder of its own, named after its events file
+# (config/event_names.properties). Every script plots ONE of them, picked by the PLOT_EVENT environment
+# variable (the first one if it is not set) - plot.sh runs all the scripts once per events file.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 _PROPERTIES_PATH = os.path.join(_CONFIG_DIR, 'default_config.properties')
 _APPLICATIONS_XML_PATH = os.path.join(_CONFIG_DIR, 'applications.xml')
 _STREAMS_XML_PATH = os.path.join(_CONFIG_DIR, 'streams.xml')
 _ROOT_CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
 _TUTORIAL_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'tutorial_names.properties')
+_EVENT_NAMES_PATH = os.path.join(_ROOT_CONFIG_DIR, 'event_names.properties')
+_TUTORIAL_KEY = 'tutorial19'
+_RESULTS_FOLDER = '../../../sim_results/tutorial19'
+# A name becomes a folder name, so it is restricted the same way EventsFiles.java (the simulation) restricts it
+_VALID_EVENT_NAME = re.compile(r'[A-Za-z0-9_.-]+')
 
 # Cycled by index so any number of scenarios gets a distinct color/marker automatically.
 _COLOR_PALETTE = [
@@ -145,20 +156,73 @@ def _make_app_label(app_name):
     return app_name.replace('_', ' ').title()
 
 
-def _load_tutorial_display_name(tutorial_key):
-    """Reads config/tutorial_names.properties; falls back to the key itself if missing."""
+def _lookup_name(names_path, key, default):
+    """
+    Reads `key=value` from a names .properties file; the default if the file or the key is missing.
+    A key that is given twice has its last value, like java.util.Properties (the simulation) reads it.
+    """
+    value = default
     try:
-        with open(_TUTORIAL_NAMES_PATH, 'r') as f:
+        with open(names_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
-                key, _, value = line.partition('=')
-                if key.strip() == tutorial_key:
-                    return value.strip()
+                name, _, text = line.partition('=')
+                if name.strip() == key:
+                    value = text.strip()
     except FileNotFoundError:
         pass
-    return tutorial_key
+    return value
+
+
+def _load_tutorial_display_name(tutorial_key):
+    """Reads config/tutorial_names.properties; falls back to the key itself if missing."""
+    return _lookup_name(_TUTORIAL_NAMES_PATH, tutorial_key, tutorial_key)
+
+
+def get_events_files():
+    """
+    Mirrors EventsFiles.discover() (Java): [(name, file_name)] for every events*.xml of the config
+    folder, sorted by file name. The name is the one config/event_names.properties gives the file
+    (key tutorial19.<file name without .xml>) or else the file name without .xml - the name of the
+    results folder of the run under that file's events.
+    """
+    file_names = sorted(f for f in os.listdir(_CONFIG_DIR) if f.startswith('events') and f.endswith('.xml'))
+    if not file_names:
+        raise ValueError(f"No events file (events*.xml) found in {os.path.abspath(_CONFIG_DIR)}")
+
+    events_files = []
+    for file_name in file_names:
+        base_name = file_name[:-len('.xml')]
+        name = _lookup_name(_EVENT_NAMES_PATH, f'{_TUTORIAL_KEY}.{base_name}', base_name)
+        if not _VALID_EVENT_NAME.fullmatch(name) or name in ('.', '..'):
+            raise ValueError(f"Invalid name '{name}' for {file_name} in {_EVENT_NAMES_PATH}: "
+                             f"it may only contain letters, digits, '_', '-' and '.'")
+        if any(name == other_name for other_name, _ in events_files):
+            raise ValueError(f"The name '{name}' is given to more than one events file (see {_EVENT_NAMES_PATH})")
+        events_files.append((name, file_name))
+    return events_files
+
+
+def get_event_names():
+    """The names of the runs, one per events file (see get_events_files())."""
+    return [name for name, _ in get_events_files()]
+
+
+def _get_selected_event():
+    """
+    The (name, file_name) of the events file to plot: the one the PLOT_EVENT environment variable
+    names, or the first one if it is not set.
+    """
+    events_files = get_events_files()
+    wanted = os.environ.get('PLOT_EVENT')
+    if not wanted:
+        return events_files[0]
+    for events_file in events_files:
+        if events_file[0] == wanted:
+            return events_file
+    raise ValueError(f"PLOT_EVENT='{wanted}' is not the name of an events file (known: {', '.join(get_event_names())})")
 
 
 def get_configuration():
@@ -180,17 +244,22 @@ def get_configuration():
     num_scenarios = len(scenario_types)
     application_names = _get_application_names(_APPLICATIONS_XML_PATH)
     stream_names = _get_stream_names(_STREAMS_XML_PATH)
+    # ONAT: every events file has its own results folder (named after it) and its own plot folder
+    event_name, events_file_name = _get_selected_event()
 
     config = {
-        'folder_path': '../../../sim_results/tutorial19',
+        'event_name': event_name,
+        'events_file': os.path.join(_CONFIG_DIR, events_file_name),
+        'folder_path': os.path.join(_RESULTS_FOLDER, event_name),
         'orchestrator_policy': _get_orchestrator_policy(_PROPERTIES_PATH),
         'application_names': application_names,
         'application_labels': [_make_app_label(name) for name in application_names],
         'stream_names': stream_names,
         'stream_labels': [_make_app_label(name) for name in stream_names],
         'output_folder_path': os.path.join(
-            os.environ.get('PLOT_RUN_DIR', '../../../sim_results/tutorial19'),
-            _load_tutorial_display_name('tutorial19')),
+            os.environ.get('PLOT_RUN_DIR', _RESULTS_FOLDER),
+            _load_tutorial_display_name(_TUTORIAL_KEY),
+            event_name),
         'num_iterations': 10,
         'x_tick_interval': 1,
         'scenario_types': scenario_types,
@@ -253,3 +322,13 @@ def get_plot_groups(config=None):
             'labels': config['stream_labels'],
         })
     return groups
+
+
+if __name__ == '__main__':
+    # ONAT: `python3 config.py --events` lists "<name> <events file name>" of every events file,
+    # one per line, for plot.sh to loop over.
+    if sys.argv[1:] == ['--events']:
+        for name, file_name in get_events_files():
+            print(name, file_name)
+    else:
+        sys.exit(f'usage: python3 {os.path.basename(__file__)} --events')

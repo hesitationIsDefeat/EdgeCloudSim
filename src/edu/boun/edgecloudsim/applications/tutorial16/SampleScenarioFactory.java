@@ -78,8 +78,8 @@ public class SampleScenarioFactory implements ScenarioFactory {
 
 	/**
 	 * Creates edge orchestrator for task offloading decisions.
-	 * @return UAVEdgeOrchestrator, whose admission check counts the running task, the
-	 * waiting list and any load already reserved in the same batch
+	 * @return UAVEdgeOrchestrator, whose admission check counts the RAM (queue_ram) held by the
+	 * running task, the waiting list and any RAM already reserved in the same batch
 	 */
 	@Override
 	public EdgeOrchestrator getEdgeOrchestrator() {

@@ -1,6 +1,23 @@
 <?xml version="1.0"?>
 <applications>
+	<!-- ONAT: UAV RAM costs, in MB. A UAV admits a task by RAM alone: service_ram is spent once on
+	     every UAV that hosts the app's service (no <service_capability> is declared, so every
+	     UAV hosts both apps: 1500 + 600 = 2100 MB), queue_ram is held by every task of the app
+	     while it is queued or running on the UAV. A task that does not fit in what is left of the
+	     UAV's VM RAM (8000 MB, edge_devices.xml) is rejected (REJECTED_DUE_TO_VM_CAPACITY), so with
+	     the 5900 MB left after the services a UAV holds up to 10 alerts at once (1 running, the
+	     rest queued), 2 whole map fusions or - split into 4 pieces of 500 MB, as the
+	     partitionable DISASTER_MAP_FUSION is - 11 pieces. vm_utilization_on_edge no longer
+	     limits the queue - it only tells which UAV is the least loaded and feeds the utilization
+	     results.
+	       DISASTER_MAP_FUSION:        the GIS engine and base map are 1500 MB and a request holds
+	                                   ~2000 MB (the fused multi-layer raster of 1.8 MB of
+	                                   compressed imagery plus its intermediate layers).
+	       SITUATION_AWARENESS_ALERTS: the rule engine and its model are 600 MB and a request
+	                                   holds ~550 MB (the window of sensor data it scores). -->
 	<application name="DISASTER_MAP_FUSION">
+		<service_ram>1500</service_ram>
+		<queue_ram>2000</queue_ram>
 		<usage_percentage>50</usage_percentage>
 		<partitionable>true</partitionable>
 		<partition_count>4</partition_count>
@@ -19,6 +36,8 @@
 		<vm_utilization_on_mobile>0</vm_utilization_on_mobile>
 	</application>
 	<application name="SITUATION_AWARENESS_ALERTS">
+		<service_ram>600</service_ram>
+		<queue_ram>550</queue_ram>
 		<usage_percentage>50</usage_percentage>
 		<partitionable>false</partitionable>
 		<partition_count>1</partition_count>

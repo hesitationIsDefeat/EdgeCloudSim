@@ -18,8 +18,10 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -132,10 +134,10 @@ public class SimSettings {
 	// decentralized policies) so the two cadences can be tuned/compared separately.
 	private double CENTRALIZED_CONTROLLER_INTERVAL;
 	private String[] TASK_PARTITION_POLICIES;
-	// ONAT: vm_utilization_on_edge values to compare in one run, each written as a policy
-	// name "UTILIZATION_<percent>" (e.g. tutorial16's "UTILIZATION_10,UTILIZATION_30") - see
-	// getVmUtilizationPolicies()/setEdgeVmUtilization(). Empty when the property isn't set.
-	private String[] VM_UTILIZATION_POLICIES;
+	// ONAT: queue_ram values (MB) to compare in one run, each written as a policy name
+	// "QUEUE_RAM_<MB>" (e.g. tutorial16's "QUEUE_RAM_700,QUEUE_RAM_2100") - see
+	// getQueueRamPolicies()/setQueueRam(). Empty when the property isn't set.
+	private String[] QUEUE_RAM_POLICIES;
 	private String currentTaskPartitionPolicy;
 	// ONAT: per-run override of every partitionable app's partition_count (e.g.
 	// tutorial14's PARTITION_<N> policies) - see setPartitionCountOverride().
@@ -214,8 +216,6 @@ public class SimSettings {
 	 * [12] Delay sensitivity factor [0-1]
 	 */
 	private double[][] taskLookUpTable = null;
-	// Column of vm_utilization_on_edge in taskLookUpTable (see the list above)
-	private static final int EDGE_VM_UTILIZATION_INDEX = 9;
 
 	// Application type names corresponding to taskLookUpTable entries
 	private String[] taskNames = null;
@@ -252,6 +252,14 @@ public class SimSettings {
 	 * Task.getTaskType()) when the tag is absent, so existing applications.xml files
 	 * keep working unchanged. */
 	private int[] taskServiceIndex = null;
+	/** ONAT: per-app RAM (MB) a task of this app holds on a UAV for as long as it is queued
+	 * or running there (applications.xml's optional queue_ram tag, see Task.getQueueRam()).
+	 * Defaults to 0 (the app costs no RAM while queued). */
+	private double[] taskQueueRam = null;
+	/** ONAT: RAM (MB) a UAV spends to host a service, by service_index (applications.xml's
+	 * optional service_ram tag) - one entry per distinct service_index, 0 when not set. All
+	 * the apps sharing a service_index must declare the same value (checked at parse time). */
+	private Map<Integer, Double> serviceRamByIndex = new HashMap<Integer, Double>();
 
 	// ONAT: stream (DAG of applications/services) definitions parsed from streams.xml -
 	// see parseStreamsXML(). All arrays are indexed by the stream's 0-based position in
@@ -280,6 +288,12 @@ public class SimSettings {
 	 * entry means that host is UNRESTRICTED (can run every app) - the default when the
 	 * tag is absent, preserving the original "every UAV can run every task" behavior. */
 	private List<int[]> edgeHostServiceCapability = null;
+
+	/** ONAT: RAM (MB) of the VM every edge host runs (edge_devices.xml's &lt;ram&gt; of the host's
+	 * first &lt;VM&gt;, the one UAV.getVm() returns - NOT the host's own &lt;ram&gt;), in the same
+	 * global host ordering as edgeHostServiceCapability - index i is the VM of the host assigned
+	 * id i. -1 for a host that declares no VM. */
+	private List<Integer> edgeHostVmRam = null;
 
     /** ONAT:
      * Event tag for edge server movement. */
@@ -388,9 +402,9 @@ public class SimSettings {
 			TASK_PARTITION_POLICIES = splitTopLevelCommaList(prop.getProperty("task_partition_policies", "FULL"))
 					.toArray(new String[0]);
 
-			// ONAT: only used by tutorials that compare several vm_utilization_on_edge values
-			// in one run (tutorial16) - empty (no entries) when not set.
-			VM_UTILIZATION_POLICIES = splitTopLevelCommaList(prop.getProperty("vm_utilization_policies", ""))
+			// ONAT: only used by tutorials that compare several queue_ram values in one run
+			// (tutorial16) - empty (no entries) when not set.
+			QUEUE_RAM_POLICIES = splitTopLevelCommaList(prop.getProperty("queue_ram_policies", ""))
 					.toArray(new String[0]);
 
 			// ONAT: only used by tutorials that decide UAV service capabilities via a
@@ -911,23 +925,22 @@ public class SimSettings {
 		return TASK_PARTITION_POLICIES;
 	}
 
-	/** ONAT: the "UTILIZATION_<percent>" entries of vm_utilization_policies (empty if unset). */
-	public String[] getVmUtilizationPolicies()
+	/** ONAT: the "QUEUE_RAM_<MB>" entries of queue_ram_policies (empty if unset). */
+	public String[] getQueueRamPolicies()
 	{
-		return VM_UTILIZATION_POLICIES;
+		return QUEUE_RAM_POLICIES;
 	}
 
 	/**
-	 * ONAT: overwrites vm_utilization_on_edge (column 9 of the application lookup table) of
-	 * EVERY application with the given percentage, replacing applications.xml's value. The
-	 * table is read live (CpuUtilizationModel_Custom.getUtilization/predictUtilization), so a
-	 * caller that compares several values in one process (tutorial16's MainApp) simply calls
-	 * this before starting each run.
+	 * ONAT: overwrites queue_ram of EVERY application with the given number of MB, replacing
+	 * applications.xml's value. It is read live (Task.getQueueRam() via getTaskQueueRam()), so a
+	 * caller that compares several values in one process (tutorial16's MainApp) simply calls this
+	 * before starting each run.
 	 */
-	public void setEdgeVmUtilization(double percent)
+	public void setQueueRam(double megabytes)
 	{
-		for(int i=0; i<taskLookUpTable.length; i++)
-			taskLookUpTable[i][EDGE_VM_UTILIZATION_INDEX] = percent;
+		for(int i=0; i<taskQueueRam.length; i++)
+			taskQueueRam[i] = megabytes;
 	}
 
 	public void setTaskPartitionPolicy(String taskPartitionPolicy)
@@ -1286,6 +1299,56 @@ public class SimSettings {
 		return edgeHostServiceCapability.get(hostId);
 	}
 
+	/**
+	 * ONAT: the RAM (MB) a task of this type holds on a UAV while it is queued or running
+	 * there, before any partition scaling (see Task.getQueueRam()). 0 when the app doesn't
+	 * set queue_ram.
+	 */
+	public double getTaskQueueRam(int taskType)
+	{
+		return taskQueueRam[taskType];
+	}
+
+	/** ONAT: the RAM (MB) a UAV spends to host this service - 0 for a service no app declares
+	 * service_ram for (or that no app has at all). */
+	public double getServiceRam(int serviceIndex)
+	{
+		return serviceRamByIndex.getOrDefault(serviceIndex, 0.0);
+	}
+
+	/**
+	 * ONAT: the RAM (MB) a UAV spends to host the given services (each distinct service
+	 * counted once). A null/empty list is an unrestricted UAV (see
+	 * UAV.canServeTaskType()), which can run every service and is charged for all of them.
+	 */
+	public double getServicesRam(int[] serviceIndices)
+	{
+		int[] services = (serviceIndices == null || serviceIndices.length == 0)
+				? getDistinctServiceIndices() : serviceIndices;
+		LinkedHashSet<Integer> distinct = new LinkedHashSet<Integer>();
+		for (int service : services) {
+			distinct.add(service);
+		}
+		double total = 0;
+		for (int service : distinct) {
+			total += getServiceRam(service);
+		}
+		return total;
+	}
+
+	/**
+	 * ONAT: the RAM (MB) of the VM that the edge host with the given id runs, as declared in
+	 * edge_devices.xml (the first &lt;VM&gt;'s &lt;ram&gt; - the VM of a UAV, see UAV.getVm()), in
+	 * the same global host ordering used when host objects are constructed. This is the RAM
+	 * every UAV RAM check works with, never the host's own &lt;ram&gt;. -1 for an unknown host or
+	 * one that declares no VM.
+	 */
+	public int getVmRamOfEdgeHost(int hostId) {
+		if (edgeHostVmRam == null || hostId < 0 || hostId >= edgeHostVmRam.size())
+			return -1;
+		return edgeHostVmRam.get(hostId);
+	}
+
 	public boolean isTaskPartitionable(int taskType)
 	{
 		if("NO".equals(currentTaskPartitionPolicy))
@@ -1478,6 +1541,23 @@ public class SimSettings {
 		return weights;
 	}
 
+	/**
+	 * ONAT: reads an optional RAM tag (MB) of an application - 0 when the tag is absent.
+	 * Must be a finite, non-negative number.
+	 */
+	private double parseRamValue(String taskName, Element appElement, String tag) {
+		if (!checkElement(appElement, tag))
+			return 0;
+
+		String text = appElement.getElementsByTagName(tag).item(0).getTextContent().trim();
+		double value = Double.parseDouble(text);
+		if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) {
+			throw new IllegalArgumentException("App '" + taskName + "': " + tag
+					+ " must be a non-negative number of MB, got '" + text + "'");
+		}
+		return value;
+	}
+
 	private void parseApplicationsXML(String filePath)
 	{
 		Document doc = null;
@@ -1519,6 +1599,8 @@ public class SimSettings {
 			taskDagPartitionWeights = new double[appList.getLength()][][];
 			taskTimeout = new double[appList.getLength()];
 			taskServiceIndex = new int[appList.getLength()];
+			taskQueueRam = new double[appList.getLength()];
+			double[] taskServiceRam = new double[appList.getLength()];
 			for (int i = 0; i < appList.getLength(); i++) {
 				Node appNode = appList.item(i);
 
@@ -1540,6 +1622,13 @@ public class SimSettings {
 				taskServiceIndex[i] = i;
 				if(checkElement(appElement, "service_index"))
 					taskServiceIndex[i] = Integer.parseInt(appElement.getElementsByTagName("service_index").item(0).getTextContent().trim());
+				// ONAT: optional UAV RAM costs (MB), both 0 when absent so an application
+				// that doesn't set them never costs any RAM: service_ram is spent once per
+				// UAV that hosts this app's service (see UAV.getServiceRam()), queue_ram by
+				// every task of this app while it is queued or running on a UAV (see
+				// Task.getQueueRam()).
+				taskServiceRam[i] = parseRamValue(taskName, appElement, "service_ram");
+				taskQueueRam[i] = parseRamValue(taskName, appElement, "queue_ram");
 				if(checkElement(appElement, "partitionable"))
 					taskPartitionable[i] = Boolean.parseBoolean(appElement.getElementsByTagName("partitionable").item(0).getTextContent());
 				if(checkElement(appElement, "partition_count"))
@@ -1600,6 +1689,18 @@ public class SimSettings {
 						value =  Double.parseDouble(appElement.getElementsByTagName(optionalAttributes[o]).item(0).getTextContent());
 
 					taskLookUpTable[i][mandatoryAttributes.length + o] = value;
+				}
+			}
+
+			// ONAT: service_ram belongs to the service, but is declared on the apps - so the
+			// apps sharing a service_index must agree on it
+			serviceRamByIndex = new HashMap<Integer, Double>();
+			for (int i = 0; i < appList.getLength(); i++) {
+				Double declared = serviceRamByIndex.putIfAbsent(taskServiceIndex[i], taskServiceRam[i]);
+				if (declared != null && declared.doubleValue() != taskServiceRam[i]) {
+					throw new IllegalArgumentException("App '" + taskNames[i] + "': service_ram " + taskServiceRam[i]
+							+ " differs from the " + declared + " another app declares for the same service_index "
+							+ taskServiceIndex[i] + " - service_ram is per service, so apps sharing a service_index must agree");
 				}
 			}
 		} catch (Exception e) {
@@ -1786,6 +1887,7 @@ public class SimSettings {
 			edgeDevicesDoc.getDocumentElement().normalize();
 
 			edgeHostServiceCapability = new ArrayList<int[]>();
+			edgeHostVmRam = new ArrayList<Integer>();
 
 			NodeList datacenterList = edgeDevicesDoc.getElementsByTagName("datacenter");
 			for (int i = 0; i < datacenterList.getLength(); i++) {
@@ -1840,7 +1942,11 @@ public class SimSettings {
 					}
 					edgeHostServiceCapability.add(serviceCapability);
 
+					// ONAT: the RAM of this host's VM (its first <VM>, see UAV.getVm()) is what
+					// every UAV RAM check uses - never the host's own <ram> - so it is recorded
+					// per host here, -1 if the host declares no VM
 					NodeList vmList = hostElement.getElementsByTagName("VM");
+					edgeHostVmRam.add(-1);
 					for (int k = 0; k < vmList.getLength(); k++) {
 						NUM_OF_EDGE_VMS++;
 						Node vmNode = vmList.item(k);
@@ -1851,6 +1957,9 @@ public class SimSettings {
 						isElementPresent(vmElement, "mips");
 						isElementPresent(vmElement, "ram");
 						isElementPresent(vmElement, "storage");
+
+						if (k == 0)
+							edgeHostVmRam.set(edgeHostVmRam.size() - 1, Integer.parseInt(vmElement.getElementsByTagName("ram").item(0).getTextContent().trim()));
 					}
 				}
 			}

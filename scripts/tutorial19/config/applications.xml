@@ -3,16 +3,38 @@
 	<!-- ONAT: tutorial19's 4 applications are 4 SERVICES, one per service_index (0-3), that the world
 	     events (events.xml) request - on their own, or together in the streams of streams.xml.
 	     Their workload is identical (so only WHICH UAVs are where matters, not what they run):
-	     a 2000 MI task is ~0.8 s on a UAV's 2500 MIPS VM and takes 10% of it, so a UAV holds at
-	     most 10 tasks (1 running + 9 queued) and serves ~1.25 requests/s.
+	     a 2000 MI task is ~0.8 s on a UAV's 2500 MIPS VM, so a UAV serves ~1.25 requests/s; how
+	     many requests it holds at once (1 running + the rest queued) is decided by RAM, see below.
 	     usage_percentage / poisson_interarrival / active_period / idle_period are the users'
 	     NORMAL request pattern - only used when default_config.properties' event_requests_only is
 	     false (then they add up to 100 together with the streams'); with event_requests_only=true
 	     users request only what the event they are at is about and these values are ignored. They
 	     are all above 0 anyway, because only an application with a usage_percentage above 0 gets
 	     its own results/plots. -->
+
+	<!-- ONAT: UAV RAM costs, in MB. A UAV admits a task by RAM alone, out of the RAM of its VM (the
+	     <ram> of the <VM> in edge_devices.xml, 8000 MB here), never the one of the host:
+	       service_ram: spent once on every UAV that hosts this service (service_index). Apps sharing
+	                    a service_index must declare the same value. A service placement (SINGLE /
+	                    ALL) whose services do not fit the VM's RAM stops the simulation with a
+	                    message before it starts.
+	       queue_ram:   held by every task of this app while it is queued or running on a UAV; a task
+	                    that does not fit in what the services and the tasks already on the UAV leave
+	                    of the VM's RAM is rejected (REJECTED_DUE_TO_VM_CAPACITY). A partition child
+	                    holds its share of it (queue_ram / its number of siblings).
+	     vm_utilization_on_edge no longer limits the queue - it only tells which UAV is the least
+	     loaded and feeds the utilization results.
+	     The 4 apps have the same workload (2000 MI, 50 KB in, 100 KB out), so the same values: an
+	     analytics microservice whose runtime and model take 1000 MB and whose request holds ~700 MB
+	     (the decoded input, the model's activations and the output buffers). Under SINGLE (one
+	     service per UAV) a UAV holds up to (8000 - 1000) / 700 = 10 tasks at once (1 running, the
+	     rest queued), under ALL (all four services on every UAV) only (8000 - 4 * 1000) / 700 = 5:
+	     hosting more services leaves less RAM for queueing. Give the apps different service_ram
+	     values to make WHICH service a UAV hosts matter for its RAM. -->
 	<application name="VIDEO_APP">
 		<service_index>0</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>15</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>60</poisson_interarrival>
@@ -29,6 +51,8 @@
 	</application>
 	<application name="MAP_APP">
 		<service_index>1</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>15</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>60</poisson_interarrival>
@@ -45,6 +69,8 @@
 	</application>
 	<application name="DETECT_APP">
 		<service_index>2</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>15</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>60</poisson_interarrival>
@@ -61,6 +87,8 @@
 	</application>
 	<application name="ALERT_APP">
 		<service_index>3</service_index>
+		<service_ram>1000</service_ram>
+		<queue_ram>700</queue_ram>
 		<usage_percentage>15</usage_percentage>
 		<prob_cloud_selection>0</prob_cloud_selection>
 		<poisson_interarrival>60</poisson_interarrival>

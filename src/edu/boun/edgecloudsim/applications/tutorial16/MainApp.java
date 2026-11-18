@@ -14,7 +14,7 @@
 //    3.1) For each mobile device population size
 //          3.1.1) For each simulation scenario
 //                  3.1.1.1) For each orchestrator policy
-//                  3.1.1.2) For each VM utilization policy
+//                  3.1.1.2) For each queue RAM policy
 //                             - Initialize CloudSim
 //                             - Build scenario factory
 //                             - Create SimManager
@@ -22,15 +22,17 @@
 //                             - Log results and duration
 // 4) Print total elapsed time
 
-// ONAT: tutorial16 studies how a single UAV's task queue behaves as a function of the
-// application's vm_utilization_on_edge. Users and UAV mobility are the same as tutorial15
+// ONAT: tutorial16 studies how a single UAV's task queue behaves as a function of the RAM
+// each queued task holds on the UAV (the application's queue_ram). A UAV admits a task by RAM
+// alone (see UAVEdgeOrchestrator), so the queue holds floor((VM RAM - service_ram) / queue_ram)
+// tasks at most. Users and UAV mobility are the same as tutorial15
 // (users converge on one meeting zone at the map center, the UAV follows the K-Means
 // centroid of the users), but there is exactly ONE UAV with ONE single-core VM and ONE
-// non-partitionable application, so every task contends for the same queue. The utilization
-// values to compare are written as policy names in vm_utilization_policies
-// (default_config.properties), e.g. "UTILIZATION_10,UTILIZATION_30,UTILIZATION_50" - each
-// run overwrites the application's vm_utilization_on_edge with that percentage (see
-// UTILIZATION_POLICY_PATTERN and SimSettings.setEdgeVmUtilization()), same "encode a
+// non-partitionable application, so every task contends for the same queue. The queue_ram
+// values to compare are written as policy names in queue_ram_policies
+// (default_config.properties), e.g. "QUEUE_RAM_700,QUEUE_RAM_2100,QUEUE_RAM_3500" - each
+// run overwrites the application's queue_ram with that many MB (see
+// QUEUE_RAM_POLICY_PATTERN and SimSettings.setQueueRam()), same "encode a
 // parameter in the policy name" convention as tutorial14's PARTITION_<N>, so all of them
 // end up as separate lines in the same plot. applications.xml's own value is only a
 // placeholder.
@@ -59,10 +61,10 @@ public class MainApp {
     public static final int EXPECTED_NUM_OF_ARGS = 5;
     public static final String APPLICATION_FOLDER = "tutorial16";
 
-    // ONAT: a "UTILIZATION_<percent>" entry in vm_utilization_policies sets every
-    // application's vm_utilization_on_edge to <percent> for that run (decimals allowed,
-    // e.g. UTILIZATION_2.5) - see SimSettings.setEdgeVmUtilization().
-    private static final Pattern UTILIZATION_POLICY_PATTERN = Pattern.compile("UTILIZATION_(\\d+(?:\\.\\d+)?)");
+    // ONAT: a "QUEUE_RAM_<MB>" entry in queue_ram_policies sets every
+    // application's queue_ram to <MB> for that run (decimals allowed,
+    // e.g. QUEUE_RAM_2.5) - see SimSettings.setQueueRam().
+    private static final Pattern QUEUE_RAM_POLICY_PATTERN = Pattern.compile("QUEUE_RAM_(\\d+(?:\\.\\d+)?)");
 
     /**
      * Creates main() to run this example
@@ -129,16 +131,16 @@ public class MainApp {
         // bare PRIORITY_KMEANS) - taken once here rather than swept in the loop below.
         String uavMobilityOption = SS.getUAVMobilityOptions()[0];
 
-        // ONAT: the utilization policies to compare, validated up front so a typo fails
+        // ONAT: the queue RAM policies to compare, validated up front so a typo fails
         // immediately instead of after the first few scenarios have already run.
-        String[] utilizationPolicies = SS.getVmUtilizationPolicies();
-        if (utilizationPolicies.length == 0) {
-            SimLogger.printLine("vm_utilization_policies is not set in " + configFile + "! Terminating simulation...");
+        String[] queueRamPolicies = SS.getQueueRamPolicies();
+        if (queueRamPolicies.length == 0) {
+            SimLogger.printLine("queue_ram_policies is not set in " + configFile + "! Terminating simulation...");
             System.exit(1);
         }
-        for (String policy : utilizationPolicies) {
-            if (!UTILIZATION_POLICY_PATTERN.matcher(policy.trim().toUpperCase()).matches()) {
-                SimLogger.printLine("Unknown vm_utilization_policies entry '" + policy + "' (expected UTILIZATION_<percent>, e.g. UTILIZATION_30)! Terminating simulation...");
+        for (String policy : queueRamPolicies) {
+            if (!QUEUE_RAM_POLICY_PATTERN.matcher(policy.trim().toUpperCase()).matches()) {
+                SimLogger.printLine("Unknown queue_ram_policies entry '" + policy + "' (expected QUEUE_RAM_<MB>, e.g. QUEUE_RAM_700)! Terminating simulation...");
                 System.exit(1);
             }
         }
@@ -186,31 +188,31 @@ public class MainApp {
                     // Evaluate each orchestrator policy under the active scenario
                     for(int i=0; i<SS.getOrchestratorPolicies().length; i++)
                     {
-                        // Evaluate each VM utilization policy under the active scenario
-                        for(int p=0; p<utilizationPolicies.length; p++)
+                        // Evaluate each queue RAM policy under the active scenario
+                        for(int p=0; p<queueRamPolicies.length; p++)
                         {
                             // Extract current test dimensions
                             String simScenario = SS.getSimulationScenarios()[k];
                             String orchestratorPolicy = SS.getOrchestratorPolicies()[i];
-                            String utilizationPolicy = utilizationPolicies[p].trim().toUpperCase();
+                            String queueRamPolicy = queueRamPolicies[p].trim().toUpperCase();
 
-                            // ONAT: every run overwrites the application's declared edge VM CPU share
-                            // (what the UAV orchestrator's admission check works with) with the
-                            // policy's percentage - pattern validity was checked above.
-                            Matcher utilizationMatcher = UTILIZATION_POLICY_PATTERN.matcher(utilizationPolicy);
-                            utilizationMatcher.matches();
-                            double edgeVmUtilization = Double.parseDouble(utilizationMatcher.group(1));
-                            SS.setEdgeVmUtilization(edgeVmUtilization);
+                            // ONAT: every run overwrites the application's queue_ram (the RAM a
+                            // task holds on the UAV, what the UAV orchestrator's admission check
+                            // works with) with the policy's MB - pattern validity was checked above.
+                            Matcher queueRamMatcher = QUEUE_RAM_POLICY_PATTERN.matcher(queueRamPolicy);
+                            queueRamMatcher.matches();
+                            double queueRam = Double.parseDouble(queueRamMatcher.group(1));
+                            SS.setQueueRam(queueRam);
 
                             Date ScenarioStartDate = Calendar.getInstance().getTime();
                             now = df.format(ScenarioStartDate);
 
                             // Log scenario header summarizing experimental factors
                             SimLogger.printLine("Scenario started at " + now);
-                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - VM Utilization Policy: " + utilizationPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
+                            SimLogger.printLine("Scenario: " + simScenario + " - Policy: " + orchestratorPolicy + " - Queue RAM Policy: " + queueRamPolicy + " - UAV Mobility: " + uavMobilityOption + " - #iteration: " + iterationNumber);
                             SimLogger.printLine("Duration: " + SS.getSimulationTime()/60 + " min (warm up period: "+ SS.getWarmUpPeriod()/60 +" min) - #users: " + j);
                             // Warm-up period: tasks started during it are excluded from the result statistics.
-                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + utilizationPolicy + "_" + j + "DEVICES");
+                            SimLogger.getInstance().simStarted(outputFolder,"SIMRESULT_" + simScenario + "_"  + orchestratorPolicy + "_" + queueRamPolicy + "_" + j + "DEVICES");
 
                             try
                             {
@@ -249,7 +251,7 @@ public class MainApp {
                             now = df.format(ScenarioEndDate);
                             SimLogger.printLine("Scenario finished at " + now +  ". It took " + SimUtils.getTimeDifference(ScenarioStartDate,ScenarioEndDate));
                             SimLogger.printLine("----------------------------------------------------------------------");
-                        }//End of utilization policies loop
+                        }//End of queue RAM policies loop
                     }//End of orchestrators loop
                 }//End of scenarios loop
             }//End of mobile devices loop

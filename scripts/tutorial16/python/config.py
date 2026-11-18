@@ -2,8 +2,8 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-# ONAT: single source of truth is default_config.properties's vm_utilization_policies
-# (UTILIZATION_<percent> entries, e.g. UTILIZATION_10,UTILIZATION_30) - scenario_types/
+# ONAT: single source of truth is default_config.properties's queue_ram_policies
+# (QUEUE_RAM_<MB> entries, e.g. QUEUE_RAM_700,QUEUE_RAM_2100) - scenario_types/
 # legends/colors/markers below are all derived from it, one line per entry. UAV mobility is
 # fixed to a single KMEANS (PRIORITY_KMEANS) variant - see MainApp.java.
 _CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
@@ -35,11 +35,11 @@ def _parse_property(properties_path, key):
     return None
 
 
-def _parse_vm_utilization_policies(properties_path):
-    """Reads the comma separated vm_utilization_policies list from default_config.properties."""
-    value = _parse_property(properties_path, 'vm_utilization_policies')
+def _parse_queue_ram_policies(properties_path):
+    """Reads the comma separated queue_ram_policies list from default_config.properties."""
+    value = _parse_property(properties_path, 'queue_ram_policies')
     if not value:
-        raise ValueError(f"vm_utilization_policies not found in {properties_path}")
+        raise ValueError(f"queue_ram_policies not found in {properties_path}")
     return [opt.strip().upper() for opt in value.split(',') if opt.strip()]
 
 
@@ -68,14 +68,14 @@ def _get_orchestrator_policy(properties_path):
     return value.split(',')[0].strip()
 
 
-_UTILIZATION_POLICY_PATTERN = re.compile(r'UTILIZATION_(\d+(?:\.\d+)?)$')
+_QUEUE_RAM_POLICY_PATTERN = re.compile(r'QUEUE_RAM_(\d+(?:\.\d+)?)$')
 
 
 def _make_legend(scenario_type):
-    """Turns 'UTILIZATION_30' into '30% Utilization' (declared vm_utilization_on_edge of every task)."""
-    match = _UTILIZATION_POLICY_PATTERN.match(scenario_type)
+    """Turns 'QUEUE_RAM_2100' into '2100 MB per task' (queue_ram of every task)."""
+    match = _QUEUE_RAM_POLICY_PATTERN.match(scenario_type)
     if match:
-        return f'{match.group(1)}% Utilization'
+        return f'{match.group(1)} MB per task'
     return scenario_type
 
 
@@ -100,7 +100,7 @@ def get_configuration():
     Returns a dictionary containing all simulation and plotting parameters.
     Equivalent to getConfiguration.m.
     """
-    scenario_types = _parse_vm_utilization_policies(_PROPERTIES_PATH)
+    scenario_types = _parse_queue_ram_policies(_PROPERTIES_PATH)
     legends = [_make_legend(scenario_type) for scenario_type in scenario_types]
     num_scenarios = len(scenario_types)
     min_devices = int(_parse_property(_PROPERTIES_PATH, 'min_number_of_mobile_devices'))
